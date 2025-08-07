@@ -1,4 +1,7 @@
-use crate::renderer::{Camera, TileProperties, TileStatus, Tiling, TilingRenderer};
+use crate::{
+    camera::Camera,
+    renderer::{TileProperties, TileStatus, Tiling, TilingRenderer},
+};
 use eframe::{App, egui};
 use egui::{
     Color32, ColorImage, Pos2, Rect, Response, Sense, Stroke, TextureFilter, TextureHandle,
@@ -13,6 +16,7 @@ use std::{
     sync::{Arc, Mutex},
     thread,
 };
+mod camera;
 mod renderer;
 
 struct Viewer {
@@ -78,12 +82,6 @@ impl Viewer {
                 .set_height(image_height as u32);
         }
 
-        let texture_options = TextureOptions {
-            magnification: TextureFilter::Nearest,
-            ..Default::default()
-        };
-        self.texture.set(self.image.clone(), texture_options);
-
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let zoom_delta = ui.input(|i| i.raw_scroll_delta)[1];
 
@@ -100,28 +98,6 @@ impl Viewer {
         if response.drag_delta()[0] != 0.0 {
             self.camera.shift_x -= response.drag_delta()[0] * self.camera.scale_x;
         }
-
-        let texture = ctx.load_texture(
-            "screen",
-            self.image.clone(),
-            TextureOptions {
-                magnification: egui::TextureFilter::Nearest,
-                ..Default::default()
-            },
-        );
-        let sized_texture = SizedTexture::from_handle(&texture);
-        painter.image(
-            sized_texture.id,
-            response.rect,
-            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-            Color32::WHITE,
-        );
-
-        let x = self.w2sx(&response, 0.0);
-        painter.line(
-            vec![Pos2::new(x, 10.0), Pos2::new(x, 100.0)],
-            Stroke::new(1.0, Color32::RED),
-        );
 
         // Render tiles
         let chunk_width: i32 = 64;
@@ -157,6 +133,26 @@ impl Viewer {
                 self.paste_dummies(64, tile_x);
             }
         }
+
+        let texture_options = TextureOptions {
+            magnification: TextureFilter::Nearest,
+            ..Default::default()
+        };
+        self.texture.set(self.image.clone(), texture_options);
+
+        let sized_texture = SizedTexture::from_handle(&self.texture);
+        painter.image(
+            sized_texture.id,
+            response.rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+
+        let x = self.w2sx(&response, 0.0);
+        painter.line(
+            vec![Pos2::new(x, 10.0), Pos2::new(x, 100.0)],
+            Stroke::new(1.0, Color32::RED),
+        );
 
         if partial {
             ctx.request_repaint();
@@ -215,10 +211,6 @@ impl App for Viewer {
     }
 }
 
-pub struct TheRealViewer {}
-
-impl TheRealViewer {}
-
 fn main() -> eframe::Result {
     let file = File::open("ae61d1d0.npy").unwrap();
     let buf_reader = BufReader::new(file);
@@ -231,11 +223,6 @@ fn main() -> eframe::Result {
     }*/
     println!("Trace length: {}", trace.len());
 
-    let chunk_width: u32 = 64;
-    while trace.len() as u32 % chunk_width != 1 {
-        trace.pop();
-    }
-
     let shared_tiling = Arc::new(Mutex::new(Tiling::new()));
     let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace.clone());
 
@@ -247,7 +234,6 @@ fn main() -> eframe::Result {
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default(),
-        //.with_inner_size([1295.0, 515.0]),
         ..Default::default()
     };
 

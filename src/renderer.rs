@@ -316,7 +316,7 @@ pub struct TileProperties {
     pub height: u32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub struct Camera {
     pub scale_x: f32,
     pub scale_y: f32,
