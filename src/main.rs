@@ -78,6 +78,10 @@ impl Viewer {
         let size = ui.available_size();
         let image_width = size.x as usize;
         let image_height = size.y as usize;
+        self.shared_tiling
+            .lock()
+            .unwrap()
+            .set_height(image_height as u32);
 
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let zoom_delta = ui.input(|i| i.raw_scroll_delta)[1];
