@@ -40,7 +40,10 @@ pub struct GpuRenderer {
 #[derive(Debug, Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct Params {
     /// Number of points in the trace buffer the shader must render.
-    trace_len: u32,
+    chunk_samples: u32,
+    /// The real number of available samples in the trace. Most of the time it is equal to
+    /// chunk_samples, excepted on the last rendered tile.
+    trace_samples: u32,
     pixel_count: u32,
     /// Rendered chunk width.
     w: u32,
@@ -249,7 +252,7 @@ impl GpuRenderer {
         self.download_output_buffer.unmap();
     }
 
-    pub fn render(&self, trace: &[f32], w: u32, h: u32, scale_y: f32) {
+    pub fn render(&self, chunk_samples: u32, trace: &[f32], w: u32, h: u32, scale_y: f32) {
         self.load_trace(trace);
 
         // The command encoder allows us to record commands that we will later submit to the GPU.
@@ -288,7 +291,8 @@ impl GpuRenderer {
 
         let command_buffer = commands.finish();
         let params = Params {
-            trace_len: trace.len() as u32,
+            chunk_samples,
+            trace_samples: trace.len() as u32,
             pixel_count,
             w,
             h,
@@ -390,7 +394,7 @@ pub struct TilingRenderer {
     shared_tiling: Arc<Mutex<Tiling>>,
     trace: Vec<f32>,
     gpu_renderer: GpuRenderer,
-    chunk_width: u32,
+    tile_width: u32,
 }
 
 impl TilingRenderer {
@@ -399,7 +403,7 @@ impl TilingRenderer {
             shared_tiling,
             trace,
             gpu_renderer: GpuRenderer::new(),
-            chunk_width: 64,
+            tile_width: 64,
         }
     }
 
@@ -444,27 +448,28 @@ impl TilingRenderer {
         }
     }
 
-    pub fn render_tile(&mut self, index: i32, scale_x: f32, scale_y: f32, h: u32) -> Vec<u32> {
-        let trace_len = self.trace.len() as u32;
-        let tile_w = self.chunk_width;
+    /// Renders the tile starting a sample `index` for the given scales `scale_x` and `scale_y`.
+    pub fn render_tile(&mut self, index: i32, scale_x: f32, scale_y: f32, tile_height: u32) -> Vec<u32> {
+        let trace_len = self.trace.len() as i32;
+        let tile_w = self.tile_width;
         let i_start = (index as f32 * tile_w as f32 * scale_x).floor() as i32;
         let i_end = ((index + 1) as f32 * tile_w as f32 * scale_x).floor() as i32;
 
-        if (i_end > trace_len as i32) || (i_start < 0) {
+        if (i_start >= trace_len) || (i_start < 0) {
             let mut result = Vec::new();
-            result.resize((self.chunk_width * h) as usize, 0);
+            result.resize((self.tile_width * tile_height) as usize, 0);
             return result;
         }
 
-        let trace_chunk = &self.trace[i_start as usize..i_end as usize];
+        let trace_chunk = &self.trace[i_start as usize..i_end.min(trace_len) as usize];
         let mut result: Vec<u32> = Vec::new();
         if trace_chunk.len() == 0 {
             return result;
         }
 
         self.gpu_renderer
-            .render(&trace_chunk, tile_w as u32, h, scale_y);
-        result.resize((tile_w * h) as usize, 0);
+            .render((tile_w as f32 * scale_x) as u32, &trace_chunk, tile_w as u32, tile_height, scale_y);
+        result.resize((tile_w * tile_height) as usize, 0);
         self.gpu_renderer.read_result(&mut result);
         result
     }
