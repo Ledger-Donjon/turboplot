@@ -1,8 +1,10 @@
+use egui::{Color32, ColorImage};
 use std::sync::{Arc, Mutex};
-use crate::renderer::GpuRenderer;
+
+use crate::{renderer::GpuRenderer, scale::Scale};
 
 /// A library of tiles and their current rendering status and result.
-/// 
+///
 /// This structure is shared between the viewer, which asks for tiles and use them, and a tile
 /// rendered which receives and fulfill rendering requests.
 pub struct Tiling {
@@ -50,6 +52,29 @@ impl Tile {
             data: Vec::new(),
         }
     }
+
+    pub fn generate_image(&self, scale_x: Scale, color_scale: ColorScale) -> ColorImage {
+        let size = self.properties.size;
+        let mut image = ColorImage::new([size.0 as usize, size.1 as usize], Color32::BLACK);
+        for x in 0..(size.0 as i32) {
+            for y in 0..size.1 as i32 {
+                let offset = x * size.1 as i32 + y;
+                let density = self.data[offset as usize];
+                let a = if density == 0 {
+                    0.0
+                } else {
+                    color_scale.minimum
+                        + ((density as f32).powf(color_scale.power)
+                            * color_scale.opacity
+                            * 0.005
+                            * (1000.0 / f32::from(scale_x)))
+                };
+                let c = (a * 255.0) as u8;
+                image.pixels[(y * size.0 as i32 + x) as usize] = Color32::from_gray(c);
+            }
+        }
+        image
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -61,19 +86,18 @@ pub enum TileStatus {
 /// Uniquely identifies a tile that can be rendered.
 /// If any of this structure values changes, the corresponding render of this tile will be
 /// different as well.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TileProperties {
     /// Rendering X-axis scale.
     /// This is the number of samples for each pixel column.
-    pub scale_x: f32,
+    pub scale_x: Scale,
     /// Rendering Y-axis scale.
-    pub scale_y: f32,
+    pub scale_y: Scale,
     /// Index of the first sample in the trace for this tile.
     pub index: i32,
-    /// Height in pixels of the tile.
-    pub height: u32,
+    /// Width and Height of the tile.
+    pub size: (u32, u32),
 }
-
 
 pub struct TilingRenderer {
     shared_tiling: Arc<Mutex<Tiling>>,
@@ -134,11 +158,17 @@ impl TilingRenderer {
     }
 
     /// Renders the tile starting a sample `index` for the given scales `scale_x` and `scale_y`.
-    pub fn render_tile(&mut self, index: i32, scale_x: f32, scale_y: f32, tile_height: u32) -> Vec<u32> {
+    pub fn render_tile(
+        &mut self,
+        index: i32,
+        scale_x: Scale,
+        scale_y: Scale,
+        tile_height: u32,
+    ) -> Vec<u32> {
         let trace_len = self.trace.len() as i32;
         let tile_w = self.tile_width;
-        let i_start = (index as f32 * tile_w as f32 * scale_x).floor() as i32;
-        let i_end = ((index + 1) as f32 * tile_w as f32 * scale_x).floor() as i32;
+        let i_start = (index as f32 * tile_w as f32 * f32::from(scale_x)).floor() as i32;
+        let i_end = ((index + 1) as f32 * tile_w as f32 * f32::from(scale_x)).floor() as i32;
 
         if (i_start >= trace_len) || (i_start < 0) {
             let mut result = Vec::new();
@@ -152,10 +182,22 @@ impl TilingRenderer {
             return result;
         }
 
-        self.gpu_renderer
-            .render((tile_w as f32 * scale_x) as u32, &trace_chunk, tile_w as u32, tile_height, scale_y);
+        self.gpu_renderer.render(
+            (tile_w as f32 * f32::from(scale_x)) as u32,
+            &trace_chunk,
+            tile_w as u32,
+            tile_height,
+            f32::from(scale_y),
+        );
         result.resize((tile_w * tile_height) as usize, 0);
         self.gpu_renderer.read_result(&mut result);
         result
     }
+}
+
+#[derive(Copy, Clone, PartialEq)]
+pub struct ColorScale {
+    pub minimum: f32,
+    pub power: f32,
+    pub opacity: f32,
 }
