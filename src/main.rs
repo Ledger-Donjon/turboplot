@@ -1,6 +1,5 @@
 use crate::{
-    camera::Camera,
-    renderer::{TileProperties, TileStatus, Tiling, TilingRenderer},
+    camera::Camera, tiling::{TileProperties, TileStatus, Tiling, TilingRenderer},
 };
 use eframe::{App, egui};
 use egui::{
@@ -18,6 +17,7 @@ use std::{
 };
 mod camera;
 mod renderer;
+mod tiling;
 
 struct Viewer {
     camera: Camera,
