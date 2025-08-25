@@ -1,9 +1,14 @@
 use crate::{
     camera::Camera,
+    renderer::RENDERER_MAX_TRACE_SIZE,
+    scale::Scale,
     tiling::{ColorScale, TileProperties, TileStatus, Tiling, TilingRenderer},
+    util::generate_checkboard,
 };
-use eframe::{App, egui};
-use egui::{Color32, Pos2, Rect, Response, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2};
+use eframe::{App, egui, egui_glow::painter};
+use egui::{
+    Color32, Painter, Pos2, Rect, Response, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2,
+};
 use muscat::util::read_array1_from_npy_file;
 use ndarray::Array1;
 use npyz::NpyFile;
@@ -18,9 +23,13 @@ mod camera;
 mod renderer;
 mod scale;
 mod tiling;
+mod util;
+
+const TILE_WIDTH: u32 = 64;
 
 struct Viewer {
     camera: Camera,
+    tile_scale_x: Scale,
     shared_tiling: Arc<Mutex<Tiling>>,
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
@@ -28,6 +37,9 @@ struct Viewer {
     /// Used to detect changes in color_scale so we can discard the texture cache.
     previous_color_scale: ColorScale,
     textures: HashMap<TileProperties, TextureHandle>,
+    /// The texture used to draw the background checkboard.
+    /// This texture is not loaded from a file but generated during initialization.
+    texture_checkboard: TextureHandle,
 }
 
 impl Viewer {
@@ -37,17 +49,21 @@ impl Viewer {
             power: 1.0,
             opacity: 1.0,
         };
+        let camera = Camera::new();
         Self {
-            camera: Camera::new(),
+            camera,
+            tile_scale_x: camera.scale_x,
             shared_tiling,
             color: Color32::WHITE,
             color_scale,
             previous_color_scale: color_scale,
             textures: HashMap::default(),
+            texture_checkboard: generate_checkboard(&ctx, 64),
         }
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut Ui) {
+    /// Toolbar widgets rendering.
+    pub fn ui_toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.color_edit_button_srgba(&mut self.color);
             ui.label("Minimum:");
@@ -66,6 +82,10 @@ impl Viewer {
                 .speed(0.005);
             ui.add(drag_opacity);
         });
+    }
+
+    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut Ui) {
+        self.ui_toolbar(ui);
 
         // If color scale changes all textures become invalid. We destroy the textures cache.
         // The GPU rendering of the tiles remains valid, we just need to recreate the images from
@@ -84,64 +104,32 @@ impl Viewer {
             .set_height(image_height as u32);
 
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
-        let zoom_delta = ui.input(|i| i.raw_scroll_delta)[1];
+        let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
+        let zooming = zoom_delta != 0.0;
 
         if zoom_delta != 0.0 {
             let factor = 1.5f32.powf(-zoom_delta / 40.0);
-            if ui.input(|i| i.modifiers.ctrl) {
+            if ui.input(|i| i.modifiers.alt) {
                 let factor = 1.0 + (zoom_delta * 0.01);
                 self.camera.scale_y = (self.camera.scale_y * factor).max(0.1.into());
             } else {
-                self.camera.scale_x = (self.camera.scale_x * factor).max(1.0.into());
-                println!("SCALE {}", f32::from(self.camera.scale_x));
+                self.camera.scale_x = (self.camera.scale_x * factor)
+                    .max(1.0.into())
+                    .min(((RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize) as f32).into());
             }
-            self.shared_tiling.lock().unwrap().tiles.clear();
+            //self.shared_tiling.lock().unwrap().tiles.clear();
         }
         if response.drag_delta()[0] != 0.0 {
             self.camera.shift_x -= response.drag_delta()[0] * f32::from(self.camera.scale_x);
         }
 
-        // Render tiles
-        let chunk_width: i32 = 64;
-        let shift_x = self.camera.shift_x / f32::from(self.camera.scale_x);
-        let tile_start = (((image_width as f32 / -2.0) + shift_x) / chunk_width as f32).floor();
-        let tile_end = (((image_width as f32 / 2.0) + shift_x) / chunk_width as f32).ceil();
-        let mut tile_indexes: Vec<_> = (tile_start as i32..tile_end as i32).collect();
-        tile_indexes.sort_by_key(|&a| {
-            let middle = ((tile_start as f32) + (tile_end as f32)) / 2.0;
-            let da = (a as f32 - middle).abs();
-            da as i32
-        });
-
-        let mut partial = false;
-
-        for tile_i in tile_indexes {
-            let data = {
-                let mut tiling = self.shared_tiling.lock().unwrap();
-                tiling.get(TileProperties {
-                    scale_x: self.camera.scale_x,
-                    scale_y: self.camera.scale_y,
-                    index: tile_i,
-                    size: (64, image_height as u32),
-                })
-            };
-            let tile_x =
-                ((tile_i * chunk_width as i32) - shift_x as i32 + (image_width as i32 / 2)) as i32;
-            if data.status == TileStatus::Rendered {
-                let tex = self.textures.entry(data.properties).or_insert_with(|| {
-                    println!("Generating tile texture");
-                    let image = data.generate_image(self.camera.scale_x, self.color_scale);
-                    ctx.load_texture("tile", image, TextureOptions::default())
-                });
-                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                let rect = Rect {
-                    min: pos2(tile_x as f32, 0.0),
-                    max: pos2((tile_x + 64) as f32, image_height as f32),
-                };
-                painter.image(tex.into(), rect, uv, self.color);
-            } else {
-                partial = true;
-                //self.paste_dummies(64, tile_x);
+        self.paint_checkboard(&response, &painter);
+        self.paint_trace(ctx, &response, &painter, self.tile_scale_x, false);
+        let mut complete = true;
+        if !zooming {
+            complete = self.paint_trace(ctx, &response, &painter, self.camera.scale_x, true);
+            if complete {
+                self.tile_scale_x = self.camera.scale_x;
             }
         }
 
@@ -151,9 +139,80 @@ impl Viewer {
             Stroke::new(1.0, Color32::RED),
         );
 
-        if partial {
+        if !complete {
             ctx.request_repaint();
         }
+    }
+
+    fn paint_trace(
+        &mut self,
+        ctx: &egui::Context,
+        response: &Response,
+        painter: &Painter,
+        scale: Scale,
+        request: bool,
+    ) -> bool {
+        let width = response.rect.width();
+        let height = response.rect.height();
+        let world_tile_width = 64.0 * f32::from(scale) / f32::from(self.camera.scale_x);
+        let shift_x = self.camera.shift_x / f32::from(self.camera.scale_x);
+        let tile_start = ((width / -2.0 + shift_x) / world_tile_width).floor();
+        let tile_end = ((width / 2.0 + shift_x) / world_tile_width).ceil();
+        let mut tile_indexes: Vec<_> = (tile_start as i32..tile_end as i32).collect();
+        tile_indexes.sort_by_key(|&a| {
+            let middle = ((tile_start as f32) + (tile_end as f32)) / 2.0;
+            let da = (a as f32 - middle).abs();
+            da as i32
+        });
+
+        let mut complete = true;
+        for tile_i in tile_indexes {
+            let tile = {
+                let mut tiling = self.shared_tiling.lock().unwrap();
+                tiling.get(
+                    TileProperties {
+                        scale_x: scale,
+                        scale_y: self.camera.scale_y,
+                        index: tile_i,
+                        size: (64, height as u32),
+                    },
+                    request,
+                )
+            };
+            let Some(tile) = tile else {
+                continue;
+            };
+            if tile.status == TileStatus::Rendered {
+                let tex = self.textures.entry(tile.properties).or_insert_with(|| {
+                    let image = tile.generate_image(self.camera.scale_x, self.color_scale);
+                    ctx.load_texture("tile", image, TextureOptions::default())
+                });
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                let tile_x = (tile_i as f32 * world_tile_width) - shift_x + width / 2.0;
+                let rect = Rect {
+                    min: pos2(tile_x, response.rect.min.y),
+                    max: pos2(tile_x + world_tile_width, response.rect.min.y + height),
+                };
+                painter.image(tex.into(), rect, uv, self.color);
+            } else {
+                complete = false;
+            }
+        }
+        complete
+    }
+
+    /// Draw a checkboard on all the surface of the given painter.
+    fn paint_checkboard(&self, response: &Response, painter: &Painter) {
+        let width = response.rect.width();
+        let height = response.rect.height();
+        let nx = width / self.texture_checkboard.size()[0] as f32;
+        let ny = height / self.texture_checkboard.size()[1] as f32;
+        painter.image(
+            (&self.texture_checkboard).into(),
+            response.rect,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(nx, ny)),
+            Color32::from_gray(10),
+        );
     }
 
     fn w2sx(&self, response: &Response, x: f64) -> f32 {
@@ -178,9 +237,9 @@ fn main() -> eframe::Result {
     let trace: Array1<i8> = read_array1_from_npy_file(npy);
     let mut trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
     let app = trace.clone();
-    /*for i in 0..31 {
+    for i in 0..30 {
         trace.extend_from_slice(&app);
-    }*/
+    }
     println!("Trace length: {}", trace.len());
 
     let shared_tiling = Arc::new(Mutex::new(Tiling::new()));

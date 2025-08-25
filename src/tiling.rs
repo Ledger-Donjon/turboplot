@@ -20,13 +20,17 @@ impl Tiling {
         }
     }
 
-    pub fn get(&mut self, properties: TileProperties) -> Tile {
+    pub fn get(&mut self, properties: TileProperties, request: bool) -> Option<Tile> {
         if let Some(tile) = self.tiles.iter().find(|x| x.properties == properties) {
-            return tile.clone();
+            return Some(tile.clone());
         }
-        let tile = Tile::new(properties);
-        self.tiles.push(tile.clone());
-        return tile;
+        if request {
+            let tile = Tile::new(properties);
+            self.tiles.push(tile.clone());
+            Some(tile)
+        } else {
+            None
+        }
     }
 
     pub fn set_height(&mut self, height: u32) {
