@@ -1,4 +1,4 @@
-use crate::{renderer::GpuRenderer, util::U64F16};
+use crate::{renderer::GpuRenderer, util::U64F24};
 use egui::{Color32, ColorImage};
 use std::sync::{Arc, Mutex};
 
@@ -56,7 +56,7 @@ impl Tile {
         }
     }
 
-    pub fn generate_image(&self, scale_x: U64F16, color_scale: ColorScale) -> ColorImage {
+    pub fn generate_image(&self, scale_x: U64F24, color_scale: ColorScale) -> ColorImage {
         let size = self.properties.size;
         let mut image = ColorImage::new([size.0 as usize, size.1 as usize], Color32::BLACK);
         for x in 0..(size.0 as i32) {
@@ -93,9 +93,9 @@ pub enum TileStatus {
 pub struct TileProperties {
     /// Rendering X-axis scale.
     /// This is the number of samples for each pixel column.
-    pub scale_x: U64F16,
+    pub scale_x: U64F24,
     /// Rendering Y-axis scale.
-    pub scale_y: U64F16,
+    pub scale_y: U64F24,
     /// Index of the first sample in the trace for this tile.
     pub index: i32,
     /// Width and Height of the tile.
@@ -164,8 +164,8 @@ impl TilingRenderer {
     pub fn render_tile(
         &mut self,
         index: i32,
-        scale_x: U64F16,
-        scale_y: U64F16,
+        scale_x: U64F24,
+        scale_y: U64F24,
         tile_height: u32,
     ) -> Vec<u32> {
         let trace_len = self.trace.len() as i32;

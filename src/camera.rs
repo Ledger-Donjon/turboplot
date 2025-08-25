@@ -1,19 +1,19 @@
-use crate::util::U64F16;
+use crate::util::U64F24;
 use egui::Rect;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Camera {
-    pub scale_x: U64F16,
-    pub scale_y: U64F16,
+    pub scale_x: U64F24,
+    pub scale_y: U64F24,
     pub shift_x: f32,
 }
 
 impl Camera {
     pub fn new() -> Self {
         Self {
-            scale_x: U64F16::from_num(1000),
+            scale_x: U64F24::from_num(1000),
             shift_x: 0.0,
-            scale_y: U64F16::from_num(1),
+            scale_y: U64F24::from_num(1),
         }
     }
 

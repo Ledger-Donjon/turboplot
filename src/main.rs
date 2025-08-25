@@ -2,7 +2,7 @@ use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
     tiling::{ColorScale, TileProperties, TileStatus, Tiling, TilingRenderer},
-    util::{U64F16, generate_checkboard},
+    util::{U64F24, generate_checkboard},
 };
 use eframe::{App, egui};
 use egui::{
@@ -27,7 +27,7 @@ const TILE_WIDTH: u32 = 64;
 
 struct Viewer {
     camera: Camera,
-    tile_scale_x: U64F16,
+    tile_scale_x: U64F24,
     shared_tiling: Arc<Mutex<Tiling>>,
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
@@ -107,14 +107,14 @@ impl Viewer {
 
         if zoom_delta != 0.0 {
             if ui.input(|i| i.modifiers.alt) {
-                let factor = U64F16::from_num(1.0 + zoom_delta * 0.01);
-                self.camera.scale_y = (self.camera.scale_y * factor).max(U64F16::from_num(1));
+                let factor = U64F24::from_num(1.0 + zoom_delta * 0.01);
+                self.camera.scale_y = (self.camera.scale_y * factor).max(U64F24::from_num(1));
             } else {
-                let factor = U64F16::from_num(1.5f32.powf(-zoom_delta / 40.0));
+                let factor = U64F24::from_num(1.5f32.powf(-zoom_delta / 40.0));
                 self.camera.scale_x =
                     (self.camera.scale_x * factor)
-                        .max(U64F16::from_num(1))
-                        .min(U64F16::from_num(
+                        .max(U64F24::from_num(1))
+                        .min(U64F24::from_num(
                             RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
                         ));
             }
@@ -145,12 +145,20 @@ impl Viewer {
         }
     }
 
+    /// Paint the trace for a given scale tiles.
+    ///
+    /// This method is usually called twice:
+    /// - first to render previously generated tiles with a new scaling, as a dirty preview,
+    /// - second to render tiles rendered with the matching scale, as the final render.
+    ///
+    /// If `request` is true, missing tiles will be requested to the rendering thread. This is the
+    /// case for the final render, not the preview.
     fn paint_trace(
         &mut self,
         ctx: &egui::Context,
         response: &Response,
         painter: &Painter,
-        scale: U64F16,
+        scale: U64F24,
         request: bool,
     ) -> bool {
         let width = response.rect.width();
