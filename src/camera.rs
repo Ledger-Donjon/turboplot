@@ -1,27 +1,31 @@
-use crate::util::U64F24;
+use crate::util::{Fixed, FixedVec2};
 use egui::Rect;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Camera {
-    pub scale_x: U64F24,
-    pub scale_y: U64F24,
-    pub shift_x: f32,
+    /// Scaling.
+    /// For X-axis, the number represents the number of samples per pixel column.
+    pub scale: FixedVec2,
+    pub shift: FixedVec2,
 }
 
 impl Camera {
     pub fn new() -> Self {
         Self {
-            scale_x: U64F24::from_num(1000),
-            shift_x: 0.0,
-            scale_y: U64F24::from_num(1),
+            scale: FixedVec2 {
+                x: Fixed::from_num(1000),
+                y: Fixed::from_num(1),
+            },
+            shift: FixedVec2::default(),
         }
     }
 
-    pub fn world_to_screen_x(&self, viewport: &Rect, x: f64) -> f32 {
-        viewport.width() / 2.0 + (x as f32 - self.shift_x) / self.scale_x.to_num::<f32>()
+    pub fn world_to_screen_x(&self, viewport: &Rect, x: Fixed) -> f32 {
+        (Fixed::from_num(viewport.width() / 2.0) + (x - self.shift.x) / self.scale.x)
+            .to_num::<f32>()
     }
 
-    pub fn screen_to_world_x(&self, viewport: &Rect, x: f32) -> f64 {
-        (self.scale_x.to_num::<f32>() * (x - viewport.width() / 2.0) + self.shift_x) as f64
+    pub fn screen_to_world_x(&self, viewport: &Rect, x: f32) -> Fixed {
+        self.scale.x * Fixed::from_num(x - viewport.width() / 2.0) + self.shift.x
     }
 }

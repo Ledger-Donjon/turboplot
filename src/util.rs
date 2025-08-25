@@ -1,7 +1,14 @@
 use egui::{Color32, ColorImage, TextureHandle, TextureOptions, TextureWrapMode};
-use fixed::{FixedU64, types::extra::U16};
+use fixed::{FixedI64, types::extra::U24};
 
-pub type U64F24 = FixedU64<U16>;
+/// Fixed floating point number used by the viewer.
+pub type Fixed = FixedI64<U24>;
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Default)]
+pub struct FixedVec2 {
+    pub x: Fixed,
+    pub y: Fixed,
+}
 
 pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {
     debug_assert!(size.is_multiple_of(2));
