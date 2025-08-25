@@ -1,11 +1,10 @@
 use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
-    scale::Scale,
     tiling::{ColorScale, TileProperties, TileStatus, Tiling, TilingRenderer},
-    util::generate_checkboard,
+    util::{U64F16, generate_checkboard},
 };
-use eframe::{App, egui, egui_glow::painter};
+use eframe::{App, egui};
 use egui::{
     Color32, Painter, Pos2, Rect, Response, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2,
 };
@@ -21,7 +20,6 @@ use std::{
 };
 mod camera;
 mod renderer;
-mod scale;
 mod tiling;
 mod util;
 
@@ -29,7 +27,7 @@ const TILE_WIDTH: u32 = 64;
 
 struct Viewer {
     camera: Camera,
-    tile_scale_x: Scale,
+    tile_scale_x: U64F16,
     shared_tiling: Arc<Mutex<Tiling>>,
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
@@ -108,19 +106,22 @@ impl Viewer {
         let zooming = zoom_delta != 0.0;
 
         if zoom_delta != 0.0 {
-            let factor = 1.5f32.powf(-zoom_delta / 40.0);
             if ui.input(|i| i.modifiers.alt) {
-                let factor = 1.0 + (zoom_delta * 0.01);
-                self.camera.scale_y = (self.camera.scale_y * factor).max(0.1.into());
+                let factor = U64F16::from_num(1.0 + zoom_delta * 0.01);
+                self.camera.scale_y = (self.camera.scale_y * factor).max(U64F16::from_num(1));
             } else {
-                self.camera.scale_x = (self.camera.scale_x * factor)
-                    .max(1.0.into())
-                    .min(((RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize) as f32).into());
+                let factor = U64F16::from_num(1.5f32.powf(-zoom_delta / 40.0));
+                self.camera.scale_x =
+                    (self.camera.scale_x * factor)
+                        .max(U64F16::from_num(1))
+                        .min(U64F16::from_num(
+                            RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
+                        ));
             }
             //self.shared_tiling.lock().unwrap().tiles.clear();
         }
         if response.drag_delta()[0] != 0.0 {
-            self.camera.shift_x -= response.drag_delta()[0] * f32::from(self.camera.scale_x);
+            self.camera.shift_x -= response.drag_delta()[0] * self.camera.scale_x.to_num::<f32>();
         }
 
         self.paint_checkboard(&response, &painter);
@@ -149,13 +150,13 @@ impl Viewer {
         ctx: &egui::Context,
         response: &Response,
         painter: &Painter,
-        scale: Scale,
+        scale: U64F16,
         request: bool,
     ) -> bool {
         let width = response.rect.width();
         let height = response.rect.height();
-        let world_tile_width = 64.0 * f32::from(scale) / f32::from(self.camera.scale_x);
-        let shift_x = self.camera.shift_x / f32::from(self.camera.scale_x);
+        let world_tile_width = 64.0 * scale.to_num::<f32>() / self.camera.scale_x.to_num::<f32>();
+        let shift_x = self.camera.shift_x / self.camera.scale_x.to_num::<f32>();
         let tile_start = ((width / -2.0 + shift_x) / world_tile_width).floor();
         let tile_end = ((width / 2.0 + shift_x) / world_tile_width).ceil();
         let mut tile_indexes: Vec<_> = (tile_start as i32..tile_end as i32).collect();
@@ -217,7 +218,7 @@ impl Viewer {
 
     fn w2sx(&self, response: &Response, x: f64) -> f32 {
         response.rect.width() / 2.0
-            + (x as f32 - self.camera.shift_x) / f32::from(self.camera.scale_x)
+            + (x as f32 - self.camera.shift_x) / self.camera.scale_x.to_num::<f32>()
     }
 }
 

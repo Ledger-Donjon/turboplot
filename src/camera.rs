@@ -1,27 +1,27 @@
-use crate::scale::Scale;
+use crate::util::U64F16;
 use egui::Rect;
 
 #[derive(Clone, Copy, PartialEq)]
 pub struct Camera {
-    pub scale_x: Scale,
-    pub scale_y: Scale,
+    pub scale_x: U64F16,
+    pub scale_y: U64F16,
     pub shift_x: f32,
 }
 
 impl Camera {
     pub fn new() -> Self {
         Self {
-            scale_x: 1000.0.into(),
+            scale_x: U64F16::from_num(1000),
             shift_x: 0.0,
-            scale_y: 1.0.into(),
+            scale_y: U64F16::from_num(1),
         }
     }
 
     pub fn world_to_screen_x(&self, viewport: &Rect, x: f64) -> f32 {
-        viewport.width() / 2.0 + (x as f32 - self.shift_x) / f32::from(self.scale_x)
+        viewport.width() / 2.0 + (x as f32 - self.shift_x) / self.scale_x.to_num::<f32>()
     }
 
     pub fn screen_to_world_x(&self, viewport: &Rect, x: f32) -> f64 {
-        (f32::from(self.scale_x) * (x - viewport.width() / 2.0) + self.shift_x) as f64
+        (self.scale_x.to_num::<f32>() * (x - viewport.width() / 2.0) + self.shift_x) as f64
     }
 }

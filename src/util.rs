@@ -1,4 +1,7 @@
 use egui::{Color32, ColorImage, TextureHandle, TextureOptions, TextureWrapMode};
+use fixed::{FixedU64, types::extra::U16};
+
+pub type U64F16 = FixedU64<U16>;
 
 pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {
     debug_assert!(size % 2 == 0);

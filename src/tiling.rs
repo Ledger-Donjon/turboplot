@@ -1,7 +1,6 @@
+use crate::{renderer::GpuRenderer, util::U64F16};
 use egui::{Color32, ColorImage};
 use std::sync::{Arc, Mutex};
-
-use crate::{renderer::GpuRenderer, scale::Scale};
 
 /// A library of tiles and their current rendering status and result.
 ///
@@ -57,7 +56,7 @@ impl Tile {
         }
     }
 
-    pub fn generate_image(&self, scale_x: Scale, color_scale: ColorScale) -> ColorImage {
+    pub fn generate_image(&self, scale_x: U64F16, color_scale: ColorScale) -> ColorImage {
         let size = self.properties.size;
         let mut image = ColorImage::new([size.0 as usize, size.1 as usize], Color32::BLACK);
         for x in 0..(size.0 as i32) {
@@ -71,7 +70,7 @@ impl Tile {
                         + ((density as f32).powf(color_scale.power)
                             * color_scale.opacity
                             * 0.005
-                            * (1000.0 / f32::from(scale_x)))
+                            * (1000.0 / scale_x.to_num::<f32>()))
                 };
                 let c = (a * 255.0) as u8;
                 image.pixels[(y * size.0 as i32 + x) as usize] = Color32::from_gray(c);
@@ -94,9 +93,9 @@ pub enum TileStatus {
 pub struct TileProperties {
     /// Rendering X-axis scale.
     /// This is the number of samples for each pixel column.
-    pub scale_x: Scale,
+    pub scale_x: U64F16,
     /// Rendering Y-axis scale.
-    pub scale_y: Scale,
+    pub scale_y: U64F16,
     /// Index of the first sample in the trace for this tile.
     pub index: i32,
     /// Width and Height of the tile.
@@ -165,14 +164,14 @@ impl TilingRenderer {
     pub fn render_tile(
         &mut self,
         index: i32,
-        scale_x: Scale,
-        scale_y: Scale,
+        scale_x: U64F16,
+        scale_y: U64F16,
         tile_height: u32,
     ) -> Vec<u32> {
         let trace_len = self.trace.len() as i32;
         let tile_w = self.tile_width;
-        let i_start = (index as f32 * tile_w as f32 * f32::from(scale_x)).floor() as i32;
-        let i_end = ((index + 1) as f32 * tile_w as f32 * f32::from(scale_x)).floor() as i32;
+        let i_start = (index as f32 * tile_w as f32 * scale_x.to_num::<f32>()).floor() as i32;
+        let i_end = ((index + 1) as f32 * tile_w as f32 * scale_x.to_num::<f32>()).floor() as i32;
 
         if (i_start >= trace_len) || (i_start < 0) {
             let mut result = Vec::new();
@@ -187,11 +186,11 @@ impl TilingRenderer {
         }
 
         self.gpu_renderer.render(
-            (tile_w as f32 * f32::from(scale_x)) as u32,
+            (tile_w as f32 * scale_x.to_num::<f32>()) as u32,
             &trace_chunk,
             tile_w as u32,
             tile_height,
-            f32::from(scale_y),
+            scale_y.to_num::<f32>(),
         );
         result.resize((tile_w * tile_height) as usize, 0);
         self.gpu_renderer.read_result(&mut result);

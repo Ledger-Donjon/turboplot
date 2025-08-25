@@ -11,3 +11,4 @@ bytemuck = "1"
 muscat = { git = "https://github.com/Ledger-Donjon/muscat.git" }
 npyz = "0.8.3"
 ndarray = "0.16.1"
+fixed = "1.29.0"
