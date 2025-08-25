@@ -4,7 +4,7 @@ use fixed::{FixedU64, types::extra::U16};
 pub type U64F24 = FixedU64<U16>;
 
 pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {
-    debug_assert!(size % 2 == 0);
+    debug_assert!(size.is_multiple_of(2));
     let mut image = ColorImage::new([size, size], Color32::BLACK);
     let half = size / 2;
     for i in 0..(size * size) {

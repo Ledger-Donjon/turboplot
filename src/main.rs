@@ -56,7 +56,7 @@ impl Viewer {
             color_scale,
             previous_color_scale: color_scale,
             textures: HashMap::default(),
-            texture_checkboard: generate_checkboard(&ctx, 64),
+            texture_checkboard: generate_checkboard(ctx, 64),
         }
     }
 
@@ -169,7 +169,7 @@ impl Viewer {
         let tile_end = ((width / 2.0 + shift_x) / world_tile_width).ceil();
         let mut tile_indexes: Vec<_> = (tile_start as i32..tile_end as i32).collect();
         tile_indexes.sort_by_key(|&a| {
-            let middle = ((tile_start as f32) + (tile_end as f32)) / 2.0;
+            let middle = (tile_start + tile_end) / 2.0;
             let da = (a as f32 - middle).abs();
             da as i32
         });

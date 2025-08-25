@@ -127,7 +127,7 @@ impl TilingRenderer {
                 .iter()
                 .find(|x| x.status == TileStatus::NotRendered)
             {
-                (tiling.height, Some(tile.properties.clone()))
+                (tiling.height, Some(tile.properties))
             } else {
                 (tiling.height, None)
             }
@@ -174,21 +174,19 @@ impl TilingRenderer {
         let i_end = ((index + 1) as f32 * tile_w as f32 * scale_x.to_num::<f32>()).floor() as i32;
 
         if (i_start >= trace_len) || (i_start < 0) {
-            let mut result = Vec::new();
-            result.resize((self.tile_width * tile_height) as usize, 0);
-            return result;
+            return vec![0; (self.tile_width * tile_height) as usize];
         }
 
         let trace_chunk = &self.trace[i_start as usize..i_end.min(trace_len) as usize];
         let mut result: Vec<u32> = Vec::new();
-        if trace_chunk.len() == 0 {
+        if trace_chunk.is_empty() {
             return result;
         }
 
         self.gpu_renderer.render(
             (tile_w as f32 * scale_x.to_num::<f32>()) as u32,
-            &trace_chunk,
-            tile_w as u32,
+            trace_chunk,
+            tile_w,
             tile_height,
             scale_y.to_num::<f32>(),
         );

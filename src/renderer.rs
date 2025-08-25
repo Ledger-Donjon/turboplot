@@ -275,7 +275,7 @@ impl GpuRenderer {
 
         let pixel_count = w * h;
         let workgroup_count = pixel_count.div_ceil(RENDERER_WORKGROUP_SIZE as u32);
-        compute_pass.dispatch_workgroups(workgroup_count as u32, 1, 1);
+        compute_pass.dispatch_workgroups(workgroup_count, 1, 1);
         drop(compute_pass); // Get back access to commands encoder
 
         commands.copy_buffer_to_buffer(
