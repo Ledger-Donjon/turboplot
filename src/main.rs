@@ -163,7 +163,8 @@ impl Viewer {
     ) -> bool {
         let width = response.rect.width();
         let height = response.rect.height();
-        let world_tile_width = 64.0 * scale.to_num::<f32>() / self.camera.scale_x.to_num::<f32>();
+        let world_tile_width =
+            (U64F24::from_num(TILE_WIDTH) * scale / self.camera.scale_x).to_num::<f32>();
         let shift_x = self.camera.shift_x / self.camera.scale_x.to_num::<f32>();
         let tile_start = ((width / -2.0 + shift_x) / world_tile_width).floor();
         let tile_end = ((width / 2.0 + shift_x) / world_tile_width).ceil();
@@ -183,7 +184,7 @@ impl Viewer {
                         scale_x: scale,
                         scale_y: self.camera.scale_y,
                         index: tile_i,
-                        size: (64, height as u32),
+                        size: (TILE_WIDTH, height as u32),
                     },
                     request,
                 )
@@ -252,7 +253,7 @@ fn main() -> eframe::Result {
     println!("Trace length: {}", trace.len());
 
     let shared_tiling = Arc::new(Mutex::new(Tiling::new()));
-    let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace.clone());
+    let mut renderer = TilingRenderer::new(shared_tiling.clone(), TILE_WIDTH, trace.clone());
 
     thread::spawn(move || {
         loop {

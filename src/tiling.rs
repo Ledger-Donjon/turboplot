@@ -110,12 +110,12 @@ pub struct TilingRenderer {
 }
 
 impl TilingRenderer {
-    pub fn new(shared_tiling: Arc<Mutex<Tiling>>, trace: Vec<f32>) -> Self {
+    pub fn new(shared_tiling: Arc<Mutex<Tiling>>, tile_width: u32, trace: Vec<f32>) -> Self {
         Self {
             shared_tiling,
             trace,
             gpu_renderer: GpuRenderer::new(),
-            tile_width: 64,
+            tile_width,
         }
     }
 
