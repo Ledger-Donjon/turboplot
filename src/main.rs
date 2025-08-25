@@ -94,7 +94,6 @@ impl Viewer {
         }
 
         let size = ui.available_size();
-        let image_width = size.x as usize;
         let image_height = size.y as usize;
         self.shared_tiling
             .lock()
@@ -232,7 +231,7 @@ impl Viewer {
 }
 
 impl App for Viewer {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_pixels_per_point(1.0);
         egui::CentralPanel::default().show(ctx, |ui| {
             self.ui(ctx, ui);
@@ -247,7 +246,7 @@ fn main() -> eframe::Result {
     let trace: Array1<i8> = read_array1_from_npy_file(npy);
     let mut trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
     let app = trace.clone();
-    for i in 0..30 {
+    for _ in 0..30 {
         trace.extend_from_slice(&app);
     }
     println!("Trace length: {}", trace.len());

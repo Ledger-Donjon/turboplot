@@ -3,10 +3,7 @@ use eframe::wgpu::{
     BindingType, Buffer, BufferBindingType, BufferDescriptor, BufferUsages, ComputePipeline,
     Device, Instance, InstanceDescriptor, MapMode, Queue, ShaderStages,
 };
-use std::{
-    num::NonZeroU64,
-    sync::{Arc, Mutex},
-};
+use std::num::NonZeroU64;
 
 /// Maximum number of f32 trace points that can be sent to the GPU at once.
 pub const RENDERER_MAX_TRACE_SIZE: usize = 8 * 1024 * 1024 * 4;
@@ -301,22 +298,5 @@ impl GpuRenderer {
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
         self.queue.submit([command_buffer]);
-    }
-}
-
-#[derive(Clone, Copy, PartialEq)]
-pub struct Camera {
-    pub scale_x: f32,
-    pub scale_y: f32,
-    pub shift_x: f32,
-}
-
-impl Camera {
-    pub fn new() -> Self {
-        Self {
-            scale_x: 1000.0,
-            shift_x: 0.0,
-            scale_y: 1.0,
-        }
     }
 }
