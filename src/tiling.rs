@@ -3,7 +3,7 @@ use crate::{
     util::{Fixed, FixedVec2},
 };
 use egui::{Color32, ColorImage};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 
 /// A library of tiles and their current rendering status and result.
 ///
@@ -40,6 +40,14 @@ impl Tiling {
             self.height = height;
             self.tiles.clear();
         }
+    }
+
+    /// Returns true if there is at least one tile which is not rendered.
+    pub fn has_pending(&self) -> bool {
+        self.tiles
+            .iter()
+            .find(|t| t.status == TileStatus::NotRendered)
+            .is_some()
     }
 }
 
@@ -104,14 +112,18 @@ pub struct TileProperties {
 }
 
 pub struct TilingRenderer {
-    shared_tiling: Arc<Mutex<Tiling>>,
+    shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
     trace: Vec<f32>,
     gpu_renderer: GpuRenderer,
     tile_width: u32,
 }
 
 impl TilingRenderer {
-    pub fn new(shared_tiling: Arc<Mutex<Tiling>>, tile_width: u32, trace: Vec<f32>) -> Self {
+    pub fn new(
+        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        tile_width: u32,
+        trace: Vec<f32>,
+    ) -> Self {
         Self {
             shared_tiling,
             trace,
@@ -120,9 +132,21 @@ impl TilingRenderer {
         }
     }
 
+    pub fn render_loop(&mut self) {
+        loop {
+            self.render_next_tile();
+            {
+                let (tiling, condvar) = &*self.shared_tiling;
+                let guard = tiling.lock().unwrap();
+                let _guard = condvar.wait_while(guard, |t| !t.has_pending()).unwrap();
+            }
+        }
+    }
+
     pub fn render_next_tile(&mut self) {
         let (height, Some(properties)) = ({
-            let tiling = self.shared_tiling.lock().unwrap();
+            let (tiling, condvar) = &*self.shared_tiling;
+            let tiling = tiling.lock().unwrap();
             if let Some(tile) = tiling
                 .tiles
                 .iter()
@@ -140,7 +164,8 @@ impl TilingRenderer {
         let data = self.render_tile(properties.index, properties.scale, height);
         // Save the result
         {
-            let mut tiling = self.shared_tiling.lock().unwrap();
+            let (tiling, condvar) = &*self.shared_tiling;
+            let mut tiling = tiling.lock().unwrap();
             if let Some(tile) = tiling.tiles.iter_mut().find(|x| x.properties == properties) {
                 tile.data = data;
                 tile.status = TileStatus::Rendered;

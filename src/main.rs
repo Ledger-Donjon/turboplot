@@ -15,7 +15,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
-    sync::{Arc, Mutex},
+    sync::{Arc, Condvar, Mutex},
     thread,
 };
 mod camera;
@@ -33,7 +33,7 @@ struct Viewer {
     /// the new tiles have not finished rendering.
     preview_camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
-    shared_tiling: Arc<Mutex<Tiling>>,
+    shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
     color_scale: ColorScale,
@@ -46,7 +46,7 @@ struct Viewer {
 }
 
 impl Viewer {
-    pub fn new(ctx: &egui::Context, shared_tiling: Arc<Mutex<Tiling>>) -> Self {
+    pub fn new(ctx: &egui::Context, shared_tiling: Arc<(Mutex<Tiling>, Condvar)>) -> Self {
         let color_scale = ColorScale {
             minimum: 0.02,
             power: 1.0,
@@ -100,10 +100,8 @@ impl Viewer {
 
         let size = ui.available_size();
         let image_height = size.y as usize;
-        self.shared_tiling
-            .lock()
-            .unwrap()
-            .set_height(image_height as u32);
+        let (tiling, condvar) = &*self.shared_tiling;
+        tiling.lock().unwrap().set_height(image_height as u32);
 
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
@@ -185,9 +183,10 @@ impl Viewer {
         });
 
         let mut complete = true;
+        let (tiling, condvar) = &*self.shared_tiling;
         for tile_i in tile_indexes {
             let tile = {
-                let mut tiling = self.shared_tiling.lock().unwrap();
+                let mut tiling = tiling.lock().unwrap();
                 tiling.get(
                     TileProperties {
                         scale,
@@ -220,6 +219,7 @@ impl Viewer {
                 complete = false;
             }
         }
+        self.shared_tiling.1.notify_one();
         complete
     }
 
@@ -259,14 +259,10 @@ fn main() -> eframe::Result {
     }
     println!("Trace length: {}", trace.len());
 
-    let shared_tiling = Arc::new(Mutex::new(Tiling::new()));
+    let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
     let mut renderer = TilingRenderer::new(shared_tiling.clone(), TILE_WIDTH, trace.clone());
 
-    thread::spawn(move || {
-        loop {
-            renderer.render_next_tile();
-        }
-    });
+    thread::spawn(move || renderer.render_loop());
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default(),
