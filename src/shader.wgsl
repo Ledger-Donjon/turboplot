@@ -4,7 +4,8 @@ struct Params {
     pixel_count: u32,
     w: u32,
     h: u32,
-    scale_y: f32
+    scale_y: f32,
+    offset: f32
 };
 
 @group(0) @binding(0)
@@ -50,11 +51,11 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Some calculation can be kept for the next loop, leading to the following faster
     // implementation below.
     
-    var p0 = input[i_start] * params.scale_y;
+    var p0 = (input[i_start] + params.offset) * params.scale_y;
     var ca0 = (y <= p0);
     var cb0 = (y > p0);
     for (var i = i_start; i < i_end; i+=1) {
-        let p1 = input[i + 1] * params.scale_y;
+        let p1 = (input[i + 1] + params.offset) * params.scale_y;
         let ca1 = (y <= p1);
         let cb1 = (y > p1);
         // Cast from bool to u32 is slightly faster than doing conditional incrementation.

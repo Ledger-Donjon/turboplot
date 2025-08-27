@@ -99,6 +99,9 @@ pub struct TileProperties {
     /// Rendering scale.
     /// For x-axis, this is the number of samples for each pixel column.
     pub scale: FixedVec2,
+    /// Vertical offset.
+    /// This value is added to the trace samples during GPU rendering.
+    pub offset: Fixed,
     /// Index of the first sample in the trace for this tile.
     pub index: i32,
     /// Width and Height of the tile.
@@ -135,7 +138,12 @@ impl TilingRenderer {
         let Some(properties) = self.shared_tiling.0.lock().unwrap().next_pending() else {
             return;
         };
-        let data = self.render_tile(properties.index, properties.scale, properties.size);
+        let data = self.render_tile(
+            properties.index,
+            properties.offset,
+            properties.scale,
+            properties.size,
+        );
         // Save the result
         let (tiling, _) = &*self.shared_tiling;
         let mut tiling = tiling.lock().unwrap();
@@ -154,7 +162,13 @@ impl TilingRenderer {
     }
 
     /// Renders the tile starting a sample `index` for the given scales `scale_x` and `scale_y`.
-    fn render_tile(&mut self, index: i32, scale: FixedVec2, size: TileSize) -> Vec<u32> {
+    fn render_tile(
+        &mut self,
+        index: i32,
+        offset: Fixed,
+        scale: FixedVec2,
+        size: TileSize,
+    ) -> Vec<u32> {
         let trace_len = self.trace.len() as i32;
         let i_start = (index as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
         let i_end = ((index + 1) as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
@@ -174,6 +188,7 @@ impl TilingRenderer {
             trace_chunk,
             size.w,
             size.h,
+            offset.to_num::<f32>(),
             scale.y.to_num::<f32>(),
         );
         result.resize(size.area() as usize, 0);

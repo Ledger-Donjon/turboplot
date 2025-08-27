@@ -48,6 +48,9 @@ struct Params {
     h: u32,
     /// Y-axis scaling coefficient.
     scale_y: f32,
+    /// Y offset.
+    /// This value is added to the trace samples before rendering.
+    offset: f32,
 }
 
 impl GpuRenderer {
@@ -249,7 +252,15 @@ impl GpuRenderer {
         self.download_output_buffer.unmap();
     }
 
-    pub fn render(&self, chunk_samples: u32, trace: &[f32], w: u32, h: u32, scale_y: f32) {
+    pub fn render(
+        &self,
+        chunk_samples: u32,
+        trace: &[f32],
+        w: u32,
+        h: u32,
+        offset: f32,
+        scale_y: f32,
+    ) {
         self.load_trace(trace);
 
         // The command encoder allows us to record commands that we will later submit to the GPU.
@@ -294,6 +305,7 @@ impl GpuRenderer {
             w,
             h,
             scale_y,
+            offset,
         };
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));

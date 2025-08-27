@@ -117,12 +117,12 @@ impl Viewer {
         let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
         let zooming = zoom_delta != 0.0;
 
-        if zoom_delta != 0.0 {
+        if zooming {
             if ui.input(|i| i.modifiers.alt) {
                 // Change in Y scaling
-                let factor = Fixed::from_num(1.0 + zoom_delta * 0.01);
+                let factor = Fixed::from_num(1.1f32.powf(zoom_delta / 40.0));
                 self.current_camera.scale.y =
-                    (self.current_camera.scale.y * factor).max(Fixed::from_num(1));
+                    (self.current_camera.scale.y * factor).max(Fixed::from_num(0.001));
             } else {
                 // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-zoom_delta / 40.0));
@@ -134,16 +134,25 @@ impl Viewer {
             }
         }
 
-        if response.drag_delta()[0] != 0.0 {
-            self.current_camera.shift.x -=
-                Fixed::from_num(response.drag_delta()[0]) * self.current_camera.scale.x;
+        let mut dragging_y = false;
+        if ui.input(|i| i.modifiers.alt) {
+            if response.drag_delta()[1] != 0.0 {
+                self.current_camera.shift.y +=
+                    Fixed::from_num(response.drag_delta()[1]) / self.current_camera.scale.y;
+                dragging_y = true;
+            }
+        } else {
+            if response.drag_delta()[0] != 0.0 {
+                self.current_camera.shift.x -=
+                    Fixed::from_num(response.drag_delta()[0]) * self.current_camera.scale.x;
+            }
         }
 
         self.paint_checkboard(&response, &painter);
-        self.paint_trace(ctx, &response, &painter, self.preview_camera.scale, false);
+        self.paint_trace(ctx, &response, &painter, self.preview_camera, false);
         let mut complete = true;
-        if !zooming {
-            complete = self.paint_trace(ctx, &response, &painter, self.current_camera.scale, true);
+        if !zooming && !dragging_y {
+            complete = self.paint_trace(ctx, &response, &painter, self.current_camera, true);
             if complete {
                 self.preview_camera = self.current_camera;
             }
@@ -175,12 +184,13 @@ impl Viewer {
         ctx: &egui::Context,
         response: &Response,
         painter: &Painter,
-        scale: FixedVec2,
+        tile_camera: Camera,
         request: bool,
     ) -> bool {
         let width = response.rect.width();
         let height = response.rect.height();
-        let world_tile_width = Fixed::from_num(TILE_WIDTH) * scale.x / self.current_camera.scale.x;
+        let world_tile_width =
+            Fixed::from_num(TILE_WIDTH) * tile_camera.scale.x / self.current_camera.scale.x;
         let shift_x = self.current_camera.shift.x / self.current_camera.scale.x;
         let tile_start = ((Fixed::from_num(width / -2.0) + shift_x) / world_tile_width)
             .floor()
@@ -201,8 +211,9 @@ impl Viewer {
                 let mut tiling = tiling.lock().unwrap();
                 tiling.get(
                     TileProperties {
-                        scale,
+                        scale: tile_camera.scale,
                         index: tile_i,
+                        offset: tile_camera.shift.y,
                         size: TileSize::new(TILE_WIDTH, height as u32),
                     },
                     request,
@@ -217,10 +228,13 @@ impl Viewer {
                     ctx.load_texture("tile", image, TextureOptions::NEAREST)
                 });
                 let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                let mul_y = (self.current_camera.scale.y / scale.y).to_num::<f32>();
+                let mul_y = (self.current_camera.scale.y / tile_camera.scale.y).to_num::<f32>();
+                let offset_y = ((self.current_camera.shift.y - tile_camera.shift.y)
+                    * self.current_camera.scale.y)
+                    .to_num::<f32>();
                 let y_mid = response.rect.center().y;
-                let y0 = y_mid - response.rect.height() * mul_y;
-                let y1 = y_mid + response.rect.height() * mul_y;
+                let y0 = y_mid - response.rect.height() * mul_y * 0.5 + offset_y;
+                let y1 = y_mid + response.rect.height() * mul_y * 0.5 + offset_y;
                 let tile_x = (Fixed::from_num(tile_i) * world_tile_width) - shift_x
                     + Fixed::from_num(width / 2.0);
                 let rect = Rect {
