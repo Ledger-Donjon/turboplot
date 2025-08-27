@@ -1,12 +1,13 @@
 use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
-    tiling::{ColorScale, TileProperties, TileStatus, Tiling, TilingRenderer},
+    tiling::{ColorScale, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
     util::{Fixed, FixedVec2, generate_checkboard},
 };
 use eframe::{App, egui};
 use egui::{
-    Color32, Painter, Pos2, Rect, Response, Sense, Stroke, TextureHandle, TextureOptions, Ui, pos2,
+    Color32, Painter, Pos2, Rect, Response, Sense, Spinner, Stroke, TextureHandle, TextureOptions,
+    Ui, pos2,
 };
 use muscat::util::read_array1_from_npy_file;
 use ndarray::Array1;
@@ -23,6 +24,12 @@ mod renderer;
 mod tiling;
 mod util;
 
+/// Defines the width of the tiles rendered by the GPU.
+/// A smaller value will raise the number of required tiles to fill the screen, the number of GPU
+/// calls will increase and therefore the overall rendering might be slower due to this overhead.
+/// A higher value can lead to unsufficient GPU memory to store a trace slice for rendering a tile,
+/// and therefore the minimum zoom level may be very limited.
+/// The current value seems to be a good compromise.
 const TILE_WIDTH: u32 = 64;
 
 struct Viewer {
@@ -34,11 +41,15 @@ struct Viewer {
     preview_camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+    /// Trace rendering color.
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
     color_scale: ColorScale,
     /// Used to detect changes in color_scale so we can discard the texture cache.
     previous_color_scale: ColorScale,
+    /// Textures created from the tiles rendered by the GPU, after the color scale has been
+    /// applied. This is kind of a cache to avoid creating the textures at each egui rendering.
+    /// If the color scale changes, the texture cache is discarded.
     textures: HashMap<TileProperties, TextureHandle>,
     /// The texture used to draw the background checkboard.
     /// This texture is not loaded from a file but generated during initialization.
@@ -48,7 +59,7 @@ struct Viewer {
 impl Viewer {
     pub fn new(ctx: &egui::Context, shared_tiling: Arc<(Mutex<Tiling>, Condvar)>) -> Self {
         let color_scale = ColorScale {
-            minimum: 0.02,
+            minimum: 0.1,
             power: 1.0,
             opacity: 1.0,
         };
@@ -84,6 +95,9 @@ impl Viewer {
                 .range(0.0..=20.0)
                 .speed(0.005);
             ui.add(drag_opacity);
+            if self.shared_tiling.0.lock().unwrap().has_pending() {
+                ui.add(Spinner::new().color(self.color).size(10.0));
+            }
         });
     }
 
@@ -120,8 +134,8 @@ impl Viewer {
                         RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
                     ));
             }
-            //self.shared_tiling.lock().unwrap().tiles.clear();
         }
+
         if response.drag_delta()[0] != 0.0 {
             self.current_camera.shift.x -=
                 Fixed::from_num(response.drag_delta()[0]) * self.current_camera.scale.x;
@@ -179,11 +193,11 @@ impl Viewer {
         let mut tile_indexes: Vec<_> = (tile_start..tile_end).collect();
         tile_indexes.sort_by_key(|&a| {
             let middle = (tile_start + tile_end) / 2;
-            (a - middle).abs();
+            (a - middle).abs()
         });
 
         let mut complete = true;
-        let (tiling, condvar) = &*self.shared_tiling;
+        let (tiling, _) = &*self.shared_tiling;
         for tile_i in tile_indexes {
             let tile = {
                 let mut tiling = tiling.lock().unwrap();
@@ -191,7 +205,7 @@ impl Viewer {
                     TileProperties {
                         scale,
                         index: tile_i,
-                        size: (TILE_WIDTH, height as u32),
+                        size: TileSize::new(TILE_WIDTH, height as u32),
                     },
                     request,
                 )
@@ -260,7 +274,7 @@ fn main() -> eframe::Result {
     println!("Trace length: {}", trace.len());
 
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let mut renderer = TilingRenderer::new(shared_tiling.clone(), TILE_WIDTH, trace.clone());
+    let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace.clone());
 
     thread::spawn(move || renderer.render_loop());
 
