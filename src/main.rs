@@ -113,20 +113,18 @@ impl Viewer {
         }
 
         let size = ui.available_size();
-        let image_height = size.y as usize;
-        let (tiling, condvar) = &*self.shared_tiling;
-        tiling.lock().unwrap().set_height(image_height as u32);
-
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
         let zooming = zoom_delta != 0.0;
 
         if zoom_delta != 0.0 {
             if ui.input(|i| i.modifiers.alt) {
+                // Change in Y scaling
                 let factor = Fixed::from_num(1.0 + zoom_delta * 0.01);
                 self.current_camera.scale.y =
                     (self.current_camera.scale.y * factor).max(Fixed::from_num(1));
             } else {
+                // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-zoom_delta / 40.0));
                 self.current_camera.scale.x = (self.current_camera.scale.x * factor)
                     .max(Fixed::from_num(1))
@@ -216,17 +214,18 @@ impl Viewer {
             if tile.status == TileStatus::Rendered {
                 let tex = self.textures.entry(tile.properties).or_insert_with(|| {
                     let image = tile.generate_image(self.current_camera.scale.x, self.color_scale);
-                    ctx.load_texture("tile", image, TextureOptions::default())
+                    ctx.load_texture("tile", image, TextureOptions::NEAREST)
                 });
                 let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                let mul_y = (self.current_camera.scale.y / scale.y).to_num::<f32>();
+                let y_mid = response.rect.center().y;
+                let y0 = y_mid - response.rect.height() * mul_y;
+                let y1 = y_mid + response.rect.height() * mul_y;
                 let tile_x = (Fixed::from_num(tile_i) * world_tile_width) - shift_x
                     + Fixed::from_num(width / 2.0);
                 let rect = Rect {
-                    min: pos2(tile_x.to_num::<f32>(), response.rect.min.y),
-                    max: pos2(
-                        (tile_x + world_tile_width).to_num::<f32>(),
-                        response.rect.min.y + height,
-                    ),
+                    min: pos2(tile_x.to_num::<f32>(), y0),
+                    max: pos2((tile_x + world_tile_width).to_num::<f32>(), y1),
                 };
                 painter.image(tex.into(), rect, uv, self.color);
             } else {
