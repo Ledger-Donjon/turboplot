@@ -352,7 +352,7 @@ fn main() {
     };
 
     eframe::run_native(
-        "Wavetracer",
+        "TurboPlot",
         options,
         Box::new(|_cc| Ok(Box::new(Viewer::new(&_cc.egui_ctx, shared_tiling)))),
     )
