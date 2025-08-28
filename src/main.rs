@@ -6,14 +6,14 @@ use crate::{
 };
 use eframe::{App, egui};
 use egui::{
-    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions,
-    Ui, pos2,
+    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions, Ui, pos2,
 };
 use muscat::util::read_array1_from_npy_file;
 use ndarray::Array1;
 use npyz::NpyFile;
 use std::{
     collections::HashMap,
+    env,
     fs::File,
     io::BufReader,
     sync::{Arc, Condvar, Mutex},
@@ -96,7 +96,11 @@ impl Viewer {
                 if tiling.has_pending() {
                     ui.add(Spinner::new().color(self.color).size(10.0));
                 }
-                ui.label(tiling.tiles.len().to_string());
+                ui.label(format!(
+                    "{} tiles / {} textures",
+                    tiling.tiles.len().to_string(),
+                    self.textures.len()
+                ));
             }
         });
     }
