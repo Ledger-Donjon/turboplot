@@ -317,16 +317,28 @@ impl App for Viewer {
     }
 }
 
-fn main() -> eframe::Result {
-    let file = File::open("ae61d1d0.npy").unwrap();
+fn main() {
+    let args: Vec<_> = env::args().collect();
+
+    if args.len() < 2 {
+        println!("Please specify a path to a numpy file.");
+        return;
+    }
+
+    if args.len() > 2 {
+        println!("Too many arguments.");
+        return;
+    }
+
+    let file = File::open(&args[1]).expect("Failed to open file");
     let buf_reader = BufReader::new(file);
-    let npy = NpyFile::new(buf_reader).unwrap();
+    let npy = NpyFile::new(buf_reader).expect("Failed to parse numpy file");
     let trace: Array1<i8> = read_array1_from_npy_file(npy);
     let mut trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
     let app = trace.clone();
-    for _ in 0..30 {
-        trace.extend_from_slice(&app);
-    }
+    //for _ in 0..30 {
+    //    trace.extend_from_slice(&app);
+    //}
     println!("Trace length: {}", trace.len());
 
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
@@ -344,4 +356,5 @@ fn main() -> eframe::Result {
         options,
         Box::new(|_cc| Ok(Box::new(Viewer::new(&_cc.egui_ctx, shared_tiling)))),
     )
+    .unwrap();
 }
