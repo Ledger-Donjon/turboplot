@@ -2,11 +2,11 @@ use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
     tiling::{ColorScale, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
-    util::{Fixed, FixedVec2, generate_checkboard},
+    util::{Fixed, generate_checkboard},
 };
 use eframe::{App, egui};
 use egui::{
-    Color32, Painter, Pos2, Rect, Response, Sense, Spinner, Stroke, TextureHandle, TextureOptions,
+    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions,
     Ui, pos2,
 };
 use muscat::util::read_array1_from_npy_file;
@@ -34,11 +34,7 @@ const TILE_WIDTH: u32 = 64;
 
 struct Viewer {
     /// Current camera settings.
-    current_camera: Camera,
-    /// Camera settings before last zoom started.
-    /// This is necessary to render old tiles using the new camera settings as a preview image when
-    /// the new tiles have not finished rendering.
-    preview_camera: Camera,
+    camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
     /// Trace rendering color.
@@ -57,16 +53,16 @@ struct Viewer {
 }
 
 impl Viewer {
+    pub const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+
     pub fn new(ctx: &egui::Context, shared_tiling: Arc<(Mutex<Tiling>, Condvar)>) -> Self {
         let color_scale = ColorScale {
             minimum: 0.1,
             power: 1.0,
             opacity: 1.0,
         };
-        let camera = Camera::new();
         Self {
-            current_camera: camera,
-            preview_camera: camera,
+            camera: Camera::new(),
             shared_tiling,
             color: Color32::WHITE,
             color_scale,
@@ -95,8 +91,12 @@ impl Viewer {
                 .range(0.0..=20.0)
                 .speed(0.005);
             ui.add(drag_opacity);
-            if self.shared_tiling.0.lock().unwrap().has_pending() {
-                ui.add(Spinner::new().color(self.color).size(10.0));
+            {
+                let tiling = self.shared_tiling.0.lock().unwrap();
+                if tiling.has_pending() {
+                    ui.add(Spinner::new().color(self.color).size(10.0));
+                }
+                ui.label(tiling.tiles.len().to_string());
             }
         });
     }
@@ -121,133 +121,148 @@ impl Viewer {
             if ui.input(|i| i.modifiers.alt) {
                 // Change in Y scaling
                 let factor = Fixed::from_num(1.1f32.powf(zoom_delta / 40.0));
-                self.current_camera.scale.y =
-                    (self.current_camera.scale.y * factor).max(Fixed::from_num(0.001));
+                self.camera.scale.y = (self.camera.scale.y * factor).max(Fixed::from_num(0.001));
             } else {
                 // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-zoom_delta / 40.0));
-                self.current_camera.scale.x = (self.current_camera.scale.x * factor)
-                    .max(Fixed::from_num(1))
-                    .min(Fixed::from_num(
-                        RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
-                    ));
+                self.camera.scale.x =
+                    (self.camera.scale.x * factor)
+                        .max(Fixed::from_num(1))
+                        .min(Fixed::from_num(
+                            RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
+                        ));
             }
         }
 
         let mut dragging_y = false;
         if ui.input(|i| i.modifiers.alt) {
             if response.drag_delta()[1] != 0.0 {
-                self.current_camera.shift.y +=
-                    Fixed::from_num(response.drag_delta()[1]) / self.current_camera.scale.y;
+                self.camera.shift.y +=
+                    Fixed::from_num(response.drag_delta()[1]) / self.camera.scale.y;
                 dragging_y = true;
             }
-        } else {
-            if response.drag_delta()[0] != 0.0 {
-                self.current_camera.shift.x -=
-                    Fixed::from_num(response.drag_delta()[0]) * self.current_camera.scale.x;
-            }
+        } else if response.drag_delta()[0] != 0.0 {
+            self.camera.shift.x -= Fixed::from_num(response.drag_delta()[0]) * self.camera.scale.x;
         }
 
+        // Draw a background checkboard to show zones that are not rendered yet.
         self.paint_checkboard(&response, &painter);
-        self.paint_trace(ctx, &response, &painter, self.preview_camera, false);
-        let mut complete = true;
+
+        // New tiles are requested when moving the camera has finished. While we are zooming or
+        // changing Y offset, we use previous tiles to render a preview.
         if !zooming && !dragging_y {
-            complete = self.paint_trace(ctx, &response, &painter, self.current_camera, true);
+            // Calculate the set of tiles which must be rendered to cover all the current screen with
+            // the current camera scale and offsets.
+            let required = self.compute_viewport_tiles(response.rect);
+
+            let mut complete = true;
+            for tile in required {
+                if self
+                    .shared_tiling
+                    .0
+                    .lock()
+                    .unwrap()
+                    .get(tile, true)
+                    .unwrap()
+                    .status
+                    != TileStatus::Rendered
+                {
+                    complete = false;
+                }
+            }
+
             if complete {
-                self.preview_camera = self.current_camera;
+                // All the tiles required to render the trace perfectly with current camera
+                // settings have been rendered by the GPU. We can therefore discard all other
+                // previous tiles which were used for the preview.
+                self.shared_tiling.0.lock().unwrap().tiles.retain(|t| {
+                    (t.properties.scale == self.camera.scale)
+                        && (t.properties.offset == self.camera.shift.y)
+                });
+            } else {
+                // Some tiles have not been rendered yet, and maybe have been added to the pool.
+                // Wake-up the rendering thread if it was sleeping.
+                self.shared_tiling.1.notify_one();
             }
         }
 
-        let x = self
-            .current_camera
-            .world_to_screen_x(&response.rect, Fixed::from_num(0));
-        painter.line(
-            vec![Pos2::new(x, 10.0), Pos2::new(x, 100.0)],
-            Stroke::new(1.0, Color32::RED),
-        );
+        self.paint_tiles(ctx, &painter, response.rect);
 
-        if !complete {
+        if self.shared_tiling.0.lock().unwrap().has_pending() {
+            // TODO: it would be better to request repaint only when the GPU renderer has finished
+            // rendering a tile. This would reduce CPU usage but requires extra thread
+            // synchronization mechanisms.
             ctx.request_repaint();
         }
     }
 
-    /// Paint the trace for a given scale tiles.
+    /// Paint all the tiles that are available in the tiling set. This includes tiles rendered with
+    /// both previous and new camera settings.
     ///
-    /// This method is usually called twice:
-    /// - first to render previously generated tiles with a new scaling, as a dirty preview,
-    /// - second to render tiles rendered with the matching scale, as the final render.
-    ///
-    /// If `request` is true, missing tiles will be requested to the rendering thread. This is the
-    /// case for the final render, not the preview.
-    fn paint_trace(
-        &mut self,
-        ctx: &egui::Context,
-        response: &Response,
-        painter: &Painter,
-        tile_camera: Camera,
-        request: bool,
-    ) -> bool {
-        let width = response.rect.width();
-        let height = response.rect.height();
-        let world_tile_width =
-            Fixed::from_num(TILE_WIDTH) * tile_camera.scale.x / self.current_camera.scale.x;
-        let shift_x = self.current_camera.shift.x / self.current_camera.scale.x;
-        let tile_start = ((Fixed::from_num(width / -2.0) + shift_x) / world_tile_width)
-            .floor()
-            .to_num::<i32>();
-        let tile_end = ((Fixed::from_num(width / 2.0) + shift_x) / world_tile_width)
-            .ceil()
-            .to_num::<i32>();
-        let mut tile_indexes: Vec<_> = (tile_start..tile_end).collect();
-        tile_indexes.sort_by_key(|&a| {
-            let middle = (tile_start + tile_end) / 2;
-            (a - middle).abs()
-        });
+    /// Because tiles are stored in a Vec, those which were requested first are rendered first.
+    /// This way the preview is always behind the final rendering.
+    fn paint_tiles(&mut self, ctx: &egui::Context, painter: &Painter, rect: Rect) {
+        // We cannot iterate the vec of tiles while rendering because of the borrow checker (mutex
+        // locking vs call to mutable paint method or texture set update). So we collect all the
+        // tiles to be rendered first.
+        // Note that we clone only the properties; we avoid cloning the tiles images.
+        let properties: Vec<_> = self
+            .shared_tiling
+            .0
+            .lock()
+            .unwrap()
+            .tiles
+            .iter()
+            .map(|t| t.properties)
+            .collect();
 
-        let mut complete = true;
-        let (tiling, _) = &*self.shared_tiling;
-        for tile_i in tile_indexes {
-            let tile = {
-                let mut tiling = tiling.lock().unwrap();
-                tiling.get(
-                    TileProperties {
-                        scale: tile_camera.scale,
-                        index: tile_i,
-                        offset: tile_camera.shift.y,
-                        size: TileSize::new(TILE_WIDTH, height as u32),
-                    },
-                    request,
-                )
-            };
-            let Some(tile) = tile else {
+        for p in properties {
+            let Some(tile) = self.shared_tiling.0.lock().unwrap().get(p, false) else {
                 continue;
             };
-            if tile.status == TileStatus::Rendered {
-                let tex = self.textures.entry(tile.properties).or_insert_with(|| {
-                    let image = tile.generate_image(self.current_camera.scale.x, self.color_scale);
-                    ctx.load_texture("tile", image, TextureOptions::NEAREST)
-                });
-                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
-                let mul_y = (self.current_camera.scale.y / tile_camera.scale.y).to_num::<f32>();
-                let offset_y = ((self.current_camera.shift.y - tile_camera.shift.y)
-                    * self.current_camera.scale.y)
-                    .to_num::<f32>();
-                let y_mid = response.rect.center().y;
-                let y0 = y_mid - response.rect.height() * mul_y * 0.5 + offset_y;
-                let y1 = y_mid + response.rect.height() * mul_y * 0.5 + offset_y;
-                let tile_x = (Fixed::from_num(tile_i) * world_tile_width) - shift_x
-                    + Fixed::from_num(width / 2.0);
-                let rect = Rect {
-                    min: pos2(tile_x.to_num::<f32>(), y0),
-                    max: pos2((tile_x + world_tile_width).to_num::<f32>(), y1),
-                };
-                painter.image(tex.into(), rect, uv, self.color);
-            } else {
-                complete = false;
+            if tile.status != TileStatus::Rendered {
+                continue;
             }
+            let tex = self
+                .textures
+                .entry(p)
+                .or_insert_with(|| {
+                    let image = tile.generate_image(self.camera.scale.x, self.color_scale);
+                    ctx.load_texture("tile", image, TextureOptions::NEAREST)
+                })
+                .clone();
+            self.paint_tile(painter, rect, tile.properties, &tex);
         }
-        self.shared_tiling.1.notify_one();
-        complete
+    }
+
+    /// Paint a particular tile in the viewport.
+    ///
+    /// The tile scale and offset can be different from the current camera settings. A homothecy is
+    /// applied to draw the tile texture at the correct position.
+    fn paint_tile(
+        &mut self,
+        painter: &Painter,
+        viewport: Rect,
+        properties: TileProperties,
+        tex: &TextureHandle,
+    ) {
+        let world_tile_width =
+            Fixed::from_num(TILE_WIDTH) * properties.scale.x / self.camera.scale.x;
+        let shift_x = self.camera.shift.x / self.camera.scale.x;
+
+        let mul_y = (self.camera.scale.y / properties.scale.y).to_num::<f32>();
+        let offset_y =
+            ((self.camera.shift.y - properties.offset) * self.camera.scale.y).to_num::<f32>();
+        let y_mid = viewport.center().y;
+        let y0 = y_mid - viewport.height() * mul_y * 0.5 + offset_y;
+        let y1 = y_mid + viewport.height() * mul_y * 0.5 + offset_y;
+        let tile_x = (Fixed::from_num(properties.index) * world_tile_width) - shift_x
+            + Fixed::from_num(viewport.width() / 2.0);
+        let rect = Rect {
+            min: pos2(tile_x.to_num::<f32>(), y0),
+            max: pos2((tile_x + world_tile_width).to_num::<f32>(), y1),
+        };
+        painter.image(tex.into(), rect, Self::UV, self.color);
     }
 
     /// Draw a checkboard on all the surface of the given painter.
@@ -262,6 +277,30 @@ impl Viewer {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(nx, ny)),
             Color32::from_gray(10),
         );
+    }
+
+    /// Calculates the set of tiles required to render the trace at full resolution in the viewport
+    /// with current camera settings.
+    ///
+    /// Tiles are sorted by distance from the screen center, so the center will be rendered first
+    /// and the edges last.
+    fn compute_viewport_tiles(&self, viewport: Rect) -> Vec<TileProperties> {
+        let width_half = Fixed::from_num(viewport.width() / 2.0);
+        let tile_width = Fixed::from_num(TILE_WIDTH);
+        let dx = self.camera.shift.x / self.camera.scale.x;
+        let start = ((-width_half + dx) / tile_width).floor().to_num::<i32>();
+        let end = ((width_half + dx) / tile_width).ceil().to_num::<i32>();
+        let mut tile_indexes: Vec<_> = (start..end).collect();
+        tile_indexes.sort_by_key(|&a| (a - (start + end) / 2).abs());
+        tile_indexes
+            .iter()
+            .map(|&index| TileProperties {
+                scale: self.camera.scale,
+                index,
+                offset: self.camera.shift.y,
+                size: TileSize::new(TILE_WIDTH, viewport.height() as u32),
+            })
+            .collect()
     }
 }
 

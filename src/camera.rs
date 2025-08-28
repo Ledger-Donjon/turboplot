@@ -20,12 +20,12 @@ impl Camera {
         }
     }
 
-    pub fn world_to_screen_x(&self, viewport: &Rect, x: Fixed) -> f32 {
+    pub fn _world_to_screen_x(&self, viewport: &Rect, x: Fixed) -> f32 {
         (Fixed::from_num(viewport.width() / 2.0) + (x - self.shift.x) / self.scale.x)
             .to_num::<f32>()
     }
 
-    pub fn screen_to_world_x(&self, viewport: &Rect, x: f32) -> Fixed {
+    pub fn _screen_to_world_x(&self, viewport: &Rect, x: f32) -> Fixed {
         self.scale.x * Fixed::from_num(x - viewport.width() / 2.0) + self.shift.x
     }
 }
