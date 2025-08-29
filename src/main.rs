@@ -1,8 +1,8 @@
 use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
-    tiling::{ColorScale, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
-    util::{Fixed, generate_checkboard},
+    tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
+    util::{Fixed, format_number_unit, generate_checkboard},
 };
 use eframe::{App, egui};
 use egui::{
@@ -50,16 +50,25 @@ struct Viewer {
     /// The texture used to draw the background checkboard.
     /// This texture is not loaded from a file but generated during initialization.
     texture_checkboard: TextureHandle,
+    /// Trace size
+    trace_len: usize,
 }
 
 impl Viewer {
     pub const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
-    pub fn new(ctx: &egui::Context, shared_tiling: Arc<(Mutex<Tiling>, Condvar)>) -> Self {
+    pub fn new(
+        ctx: &egui::Context,
+        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        trace_len: usize,
+    ) -> Self {
         let color_scale = ColorScale {
-            minimum: 0.1,
             power: 1.0,
-            opacity: 1.0,
+            opacity: 10.0,
+            gradient: Gradient::SingleColor {
+                min: 0.1,
+                end: Color32::WHITE,
+            },
         };
         Self {
             camera: Camera::new(),
@@ -69,18 +78,57 @@ impl Viewer {
             previous_color_scale: color_scale,
             textures: HashMap::default(),
             texture_checkboard: generate_checkboard(ctx, 64),
+            trace_len,
         }
     }
 
     /// Toolbar widgets rendering.
     pub fn ui_toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.color_edit_button_srgba(&mut self.color);
-            ui.label("Minimum:");
-            let drag_minimum_gray = egui::DragValue::new(&mut self.color_scale.minimum)
-                .range(0.0..=1.0)
-                .speed(0.005);
-            ui.add(drag_minimum_gray);
+            ui.label(format!(
+                "Trace length: {} samples",
+                format_number_unit(self.trace_len)
+            ));
+
+            egui::ComboBox::from_label("Display:")
+                .selected_text(self.color_scale.gradient.name())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(
+                        &mut self.color_scale.gradient,
+                        Gradient::SingleColor {
+                            min: 0.1,
+                            end: Color32::WHITE,
+                        },
+                        "Single color",
+                    );
+                    ui.selectable_value(
+                        &mut self.color_scale.gradient,
+                        Gradient::BiColor {
+                            start: Color32::BLUE,
+                            end: Color32::GREEN,
+                        },
+                        "Gradient",
+                    );
+                    ui.selectable_value(
+                        &mut self.color_scale.gradient,
+                        Gradient::Rainbow,
+                        "Rainbow",
+                    );
+                });
+
+            match &mut self.color_scale.gradient {
+                Gradient::SingleColor { min, end } => {
+                    let drag = egui::DragValue::new(min).range(0.0..=1.0).speed(0.001);
+                    ui.add(drag);
+                    ui.color_edit_button_srgba(end);
+                }
+                Gradient::BiColor { start, end } => {
+                    ui.color_edit_button_srgba(start);
+                    ui.color_edit_button_srgba(end);
+                }
+                Gradient::Rainbow => {}
+            };
+
             ui.label("Power:");
             let drag_power = egui::DragValue::new(&mut self.color_scale.power)
                 .range(0.1..=4.0)
@@ -88,8 +136,8 @@ impl Viewer {
             ui.add(drag_power);
             ui.label("Opacity:");
             let drag_opacity = egui::DragValue::new(&mut self.color_scale.opacity)
-                .range(0.0..=20.0)
-                .speed(0.005);
+                .range(0.0..=100.0)
+                .speed(0.05);
             ui.add(drag_opacity);
             {
                 let tiling = self.shared_tiling.0.lock().unwrap();
@@ -98,7 +146,7 @@ impl Viewer {
                 }
                 ui.label(format!(
                     "{} tiles / {} textures",
-                    tiling.tiles.len().to_string(),
+                    tiling.tiles.len(),
                     self.textures.len()
                 ));
             }
@@ -339,10 +387,11 @@ fn main() {
     //for _ in 0..30 {
     //    trace.extend_from_slice(&app);
     //}
+    let trace_len = trace.len();
     println!("Trace length: {}", trace.len());
 
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace.clone());
+    let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace);
 
     thread::spawn(move || renderer.render_loop());
 
@@ -354,7 +403,13 @@ fn main() {
     eframe::run_native(
         "TurboPlot",
         options,
-        Box::new(|_cc| Ok(Box::new(Viewer::new(&_cc.egui_ctx, shared_tiling)))),
+        Box::new(|_cc| {
+            Ok(Box::new(Viewer::new(
+                &_cc.egui_ctx,
+                shared_tiling,
+                trace_len,
+            )))
+        }),
     )
     .unwrap();
 }

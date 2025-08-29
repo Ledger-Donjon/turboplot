@@ -2,7 +2,7 @@ use crate::{
     renderer::GpuRenderer,
     util::{Fixed, FixedVec2},
 };
-use egui::{Color32, ColorImage};
+use egui::{Color32, ColorImage, epaint::Hsva};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A library of tiles and their current rendering status and result.
@@ -64,6 +64,7 @@ impl Tile {
     pub fn generate_image(&self, color_scale: ColorScale) -> ColorImage {
         let size = self.properties.size;
         let mut image = ColorImage::new([size.w as usize, size.h as usize], Color32::BLACK);
+        let sx = 1.0 / self.properties.scale.x.to_num::<f32>();
         for x in 0..(size.w as i32) {
             for y in 0..size.h as i32 {
                 let offset = x * size.h as i32 + y;
@@ -71,14 +72,14 @@ impl Tile {
                 let a = if density == 0 {
                     0.0
                 } else {
-                    color_scale.minimum
-                        + ((density as f32).powf(color_scale.power)
-                            * color_scale.opacity
-                            * 0.005
-                            * (1000.0 / self.properties.scale.x.to_num::<f32>()))
+                    ((density as f32) * sx).powf(color_scale.power) * color_scale.opacity
                 };
-                let c = (a * 255.0) as u8;
-                image.pixels[(y * size.w as i32 + x) as usize] = Color32::from_gray(c);
+                let color = if a > 0.0 {
+                    color_scale.gradient.apply(a.clamp(0.0, 1.0))
+                } else {
+                    Color32::BLACK
+                };
+                image.pixels[(y * size.w as i32 + x) as usize] = color;
             }
         }
         image
@@ -198,10 +199,39 @@ impl TilingRenderer {
 }
 
 #[derive(Copy, Clone, PartialEq)]
+pub enum Gradient {
+    SingleColor { min: f32, end: Color32 },
+    BiColor { start: Color32, end: Color32 },
+    Rainbow,
+}
+
+impl Gradient {
+    pub fn apply(&self, x: f32) -> Color32 {
+        debug_assert!((0.0..=1.0).contains(&x));
+        match self {
+            Gradient::SingleColor { min, end } => {
+                let t = x * (1.0 - min) + min;
+                Color32::BLACK.lerp_to_gamma(*end, t)
+            }
+            Gradient::BiColor { start, end } => start.lerp_to_gamma(*end, x),
+            Gradient::Rainbow => Hsva::new(x, 1.0, 1.0, 1.0).into(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        match self {
+            Gradient::SingleColor { .. } => "Single color",
+            Gradient::BiColor { .. } => "Gradient",
+            Gradient::Rainbow => "Rainbow",
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq)]
 pub struct ColorScale {
-    pub minimum: f32,
     pub power: f32,
     pub opacity: f32,
+    pub gradient: Gradient,
 }
 
 /// Defines the size of a tile.

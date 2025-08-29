@@ -29,3 +29,15 @@ pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {
         },
     )
 }
+
+pub fn format_number_unit(n: usize) -> String {
+    if n < 1000 {
+        n.to_string()
+    } else if n < 1000000 {
+        format!("{:.1}k", (n as f32) / 1000.0)
+    } else if n < 1000000000 {
+        format!("{:.1}M", (n as f32) / 1e6)
+    } else {
+        format!("{:.1}G", (n as f32) / 1e9)
+    }
+}
