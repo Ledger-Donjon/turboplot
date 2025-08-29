@@ -61,7 +61,7 @@ impl Tile {
         }
     }
 
-    pub fn generate_image(&self, scale_x: Fixed, color_scale: ColorScale) -> ColorImage {
+    pub fn generate_image(&self, color_scale: ColorScale) -> ColorImage {
         let size = self.properties.size;
         let mut image = ColorImage::new([size.w as usize, size.h as usize], Color32::BLACK);
         for x in 0..(size.w as i32) {
@@ -75,7 +75,7 @@ impl Tile {
                         + ((density as f32).powf(color_scale.power)
                             * color_scale.opacity
                             * 0.005
-                            * (1000.0 / scale_x.to_num::<f32>()))
+                            * (1000.0 / self.properties.scale.x.to_num::<f32>()))
                 };
                 let c = (a * 255.0) as u8;
                 image.pixels[(y * size.w as i32 + x) as usize] = Color32::from_gray(c);

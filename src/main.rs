@@ -231,7 +231,7 @@ impl Viewer {
                 .textures
                 .entry(p)
                 .or_insert_with(|| {
-                    let image = tile.generate_image(self.camera.scale.x, self.color_scale);
+                    let image = tile.generate_image(self.color_scale);
                     ctx.load_texture("tile", image, TextureOptions::NEAREST)
                 })
                 .clone();
