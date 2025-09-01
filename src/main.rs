@@ -52,6 +52,8 @@ struct Viewer {
     texture_checkboard: TextureHandle,
     /// Trace size
     trace_len: usize,
+    /// When true, the viewer will change scale and offset so the trace fits the screen.
+    autoscale_request: bool,
 }
 
 impl Viewer {
@@ -79,6 +81,7 @@ impl Viewer {
             textures: HashMap::default(),
             texture_checkboard: generate_checkboard(ctx, 64),
             trace_len,
+            autoscale_request: true,
         }
     }
 
@@ -86,11 +89,11 @@ impl Viewer {
     pub fn ui_toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.label(format!(
-                "Trace length: {} samples",
+                "Trace: {} samples",
                 format_number_unit(self.trace_len)
             ));
 
-            egui::ComboBox::from_label("Display:")
+            egui::ComboBox::from_id_salt("display")
                 .selected_text(self.color_scale.gradient.name())
                 .show_ui(ui, |ui| {
                     ui.selectable_value(
@@ -136,9 +139,10 @@ impl Viewer {
             ui.add(drag_power);
             ui.label("Opacity:");
             let drag_opacity = egui::DragValue::new(&mut self.color_scale.opacity)
-                .range(0.0..=100.0)
+                .range(0.01..=100.0)
                 .speed(0.05);
             ui.add(drag_opacity);
+            self.autoscale_request |= ui.button("Auto").clicked();
             {
                 let tiling = self.shared_tiling.0.lock().unwrap();
                 if tiling.has_pending() {
@@ -153,8 +157,25 @@ impl Viewer {
         });
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut Ui) {
-        self.ui_toolbar(ui);
+    pub fn ui(&mut self, ctx: &egui::Context) {
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().outer_margin(0.0))
+            .show(ctx, |ui| self.ui_waveform(ctx, ui));
+        egui::TopBottomPanel::top("toolbar")
+            .frame(
+                egui::Frame::default()
+                    .fill(Color32::from_rgba_unmultiplied(30, 30, 30, 200))
+                    .inner_margin(8.0)
+                    .outer_margin(8.0)
+                    .corner_radius(4.0),
+            )
+            .show_separator_line(false)
+            .show(ctx, |ui| self.ui_toolbar(ui));
+    }
+
+    pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui) {
+        //egui::Frame::default().fill(Color32::from_gray(30)).inner_margin(8.0).show(ui, |ui| self.ui_toolbar(ui));
+        //let frame = egui::Frame::default().fill(Color32::RED);
 
         // If color scale changes all textures become invalid. We destroy the textures cache.
         // The GPU rendering of the tiles remains valid, we just need to recreate the images from
@@ -164,6 +185,7 @@ impl Viewer {
             self.previous_color_scale = self.color_scale;
         }
 
+        let ppp = ctx.pixels_per_point();
         let size = ui.available_size();
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
@@ -190,11 +212,19 @@ impl Viewer {
         if ui.input(|i| i.modifiers.alt) {
             if response.drag_delta()[1] != 0.0 {
                 self.camera.shift.y +=
-                    Fixed::from_num(response.drag_delta()[1]) / self.camera.scale.y;
+                    Fixed::from_num(response.drag_delta()[1] * ppp) / self.camera.scale.y;
                 dragging_y = true;
             }
         } else if response.drag_delta()[0] != 0.0 {
-            self.camera.shift.x -= Fixed::from_num(response.drag_delta()[0]) * self.camera.scale.x;
+            self.camera.shift.x -=
+                Fixed::from_num(response.drag_delta()[0] * ppp) * self.camera.scale.x;
+        }
+
+        if self.autoscale_request {
+            self.autoscale_request = false;
+            let trace_len = Fixed::from_num(self.trace_len);
+            self.camera.scale.x = trace_len / Fixed::from_num(response.rect.width() * ppp);
+            self.camera.shift.x = trace_len / 2;
         }
 
         // Draw a background checkboard to show zones that are not rendered yet.
@@ -205,7 +235,7 @@ impl Viewer {
         if !zooming && !dragging_y {
             // Calculate the set of tiles which must be rendered to cover all the current screen with
             // the current camera scale and offsets.
-            let required = self.compute_viewport_tiles(response.rect);
+            let required = self.compute_viewport_tiles(response.rect * ppp);
 
             let mut complete = true;
             for tile in required {
@@ -242,7 +272,7 @@ impl Viewer {
             }
         }
 
-        self.paint_tiles(ctx, &painter, response.rect);
+        self.paint_tiles(ctx, ppp, &painter, response.rect);
 
         if self.shared_tiling.0.lock().unwrap().has_pending() {
             // TODO: it would be better to request repaint only when the GPU renderer has finished
@@ -257,7 +287,7 @@ impl Viewer {
     ///
     /// Because tiles are stored in a Vec, those which were requested first are rendered first.
     /// This way the preview is always behind the final rendering.
-    fn paint_tiles(&mut self, ctx: &egui::Context, painter: &Painter, rect: Rect) {
+    fn paint_tiles(&mut self, ctx: &egui::Context, ppp: f32, painter: &Painter, rect: Rect) {
         // We cannot iterate the vec of tiles while rendering because of the borrow checker (mutex
         // locking vs call to mutable paint method or texture set update). So we collect all the
         // tiles to be rendered first.
@@ -287,7 +317,7 @@ impl Viewer {
                     ctx.load_texture("tile", image, TextureOptions::NEAREST)
                 })
                 .clone();
-            self.paint_tile(painter, rect, tile.properties, &tex);
+            self.paint_tile(painter, ppp, rect, tile.properties, &tex);
         }
     }
 
@@ -298,6 +328,7 @@ impl Viewer {
     fn paint_tile(
         &mut self,
         painter: &Painter,
+        ppp: f32,
         viewport: Rect,
         properties: TileProperties,
         tex: &TextureHandle,
@@ -313,10 +344,13 @@ impl Viewer {
         let y0 = y_mid - viewport.height() * mul_y * 0.5 + offset_y;
         let y1 = y_mid + viewport.height() * mul_y * 0.5 + offset_y;
         let tile_x = (Fixed::from_num(properties.index) * world_tile_width) - shift_x
-            + Fixed::from_num(viewport.width() / 2.0);
+            + Fixed::from_num(viewport.width() * ppp / 2.0);
         let rect = Rect {
-            min: pos2(tile_x.to_num::<f32>(), y0),
-            max: pos2((tile_x + world_tile_width).to_num::<f32>(), y1),
+            min: pos2(viewport.min.x + tile_x.to_num::<f32>() / ppp, y0),
+            max: pos2(
+                viewport.min.x + (tile_x + world_tile_width).to_num::<f32>() / ppp,
+                y1,
+            ),
         };
         painter.image(tex.into(), rect, Self::UV, self.color);
     }
@@ -362,10 +396,7 @@ impl Viewer {
 
 impl App for Viewer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.set_pixels_per_point(1.0);
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.ui(ctx, ui);
-        });
+        self.ui(ctx);
     }
 }
 
@@ -386,14 +417,8 @@ fn main() {
     let buf_reader = BufReader::new(file);
     let npy = NpyFile::new(buf_reader).expect("Failed to parse numpy file");
     let trace: Array1<i8> = read_array1_from_npy_file(npy);
-    let mut trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
-    let app = trace.clone();
-    //for _ in 0..30 {
-    //    trace.extend_from_slice(&app);
-    //}
+    let trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
     let trace_len = trace.len();
-    println!("Trace length: {}", trace.len());
-
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
     let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace);
 
