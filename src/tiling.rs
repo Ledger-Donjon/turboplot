@@ -2,7 +2,7 @@ use crate::{
     renderer::GpuRenderer,
     util::{Fixed, FixedVec2},
 };
-use egui::{Color32, ColorImage, epaint::Hsva};
+use egui::{epaint::Hsva, lerp, Color32, ColorImage};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A library of tiles and their current rendering status and result.
@@ -214,7 +214,7 @@ impl Gradient {
                 Color32::BLACK.lerp_to_gamma(*end, t)
             }
             Gradient::BiColor { start, end } => start.lerp_to_gamma(*end, x),
-            Gradient::Rainbow => Hsva::new(x, 1.0, 1.0, 1.0).into(),
+            Gradient::Rainbow => Hsva::new(lerp(4.0/6.0..=0.0, x), 1.0, 1.0, 1.0).into(),
         }
     }
 
