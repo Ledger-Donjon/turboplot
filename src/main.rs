@@ -227,10 +227,14 @@ impl Viewer {
                 // All the tiles required to render the trace perfectly with current camera
                 // settings have been rendered by the GPU. We can therefore discard all other
                 // previous tiles which were used for the preview.
-                self.shared_tiling.0.lock().unwrap().tiles.retain(|t| {
+                let mut tiling = self.shared_tiling.0.lock().unwrap();
+                tiling.tiles.retain(|t| {
                     (t.properties.scale == self.camera.scale)
                         && (t.properties.offset == self.camera.shift.y)
                 });
+                // We also discard textures that are not used anymore.
+                self.textures
+                    .retain(|k, v| tiling.tiles.iter().find(|t| t.properties == *k).is_some());
             } else {
                 // Some tiles have not been rendered yet, and maybe have been added to the pool.
                 // Wake-up the rendering thread if it was sleeping.
