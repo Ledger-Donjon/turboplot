@@ -32,6 +32,9 @@ mod util;
 /// The current value seems to be a good compromise.
 const TILE_WIDTH: u32 = 64;
 
+/// Minimum zoom level that can be rendered by the GPU.
+const MIN_SCALE_X: usize = RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize;
+
 struct Viewer {
     /// Current camera settings.
     camera: Camera,
@@ -188,9 +191,8 @@ impl Viewer {
         let ppp = ctx.pixels_per_point();
         let size = ui.available_size();
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
-        let zoom_delta = ui.input(|i| i.smooth_scroll_delta)[1];
+        let (zoom_delta, pos) = ui.input(|i| (i.smooth_scroll_delta[1], i.pointer.latest_pos()));
         let zooming = zoom_delta != 0.0;
-
         if zooming {
             if ui.input(|i| i.modifiers.alt) {
                 // Change in Y scaling
@@ -199,12 +201,11 @@ impl Viewer {
             } else {
                 // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-zoom_delta / 40.0));
-                self.camera.scale.x =
-                    (self.camera.scale.x * factor)
-                        .max(Fixed::from_num(1))
-                        .min(Fixed::from_num(
-                            RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize,
-                        ));
+                let s1 = self.camera.scale.x;
+                let s2 = (s1 * factor).clamp(Fixed::from_num(1), Fixed::from_num(MIN_SCALE_X));
+                let k = Fixed::from_num(pos.unwrap().x - response.rect.width() / 2.0);
+                self.camera.shift.x = s1 * k + self.camera.shift.x - s2 * k;
+                self.camera.scale.x = s2;
             }
         }
 
@@ -223,7 +224,8 @@ impl Viewer {
         if self.autoscale_request {
             self.autoscale_request = false;
             let trace_len = Fixed::from_num(self.trace_len);
-            self.camera.scale.x = trace_len / Fixed::from_num(response.rect.width() * ppp);
+            self.camera.scale.x = (trace_len / Fixed::from_num(response.rect.width() * ppp))
+                .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
         }
 
