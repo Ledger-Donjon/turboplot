@@ -6,6 +6,20 @@ Traces are displayed using a density rendering algorithm performed on the GPU th
 
 ![screenshot](screenshot.png)
 
+# Usage
+
+```
+cargo run --release -- waveform.npy
+```
+
+Rendering is also possible using only CPU backend:
+
+```
+cargo run --release -- -b cpu waveform.npy
+```
+
+Note: In this mode, display still uses GPU. Only the trace rendering will be performed on the CPU.
+
 ## License
 
 Licensed under either of
