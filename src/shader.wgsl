@@ -57,7 +57,7 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     for (var i = i_start; i < i_end; i+=1) {
         let p1 = (input[i + 1] + params.offset) * params.scale_y;
         let ca1 = (y <= p1);
-        let cb1 = (y > p1);
+        let cb1 = (y >= p1);
         // Cast from bool to u32 is slightly faster than doing conditional incrementation.
         density += u32((cb0 && ca1) || (cb1 && ca0));
         p0 = p1;

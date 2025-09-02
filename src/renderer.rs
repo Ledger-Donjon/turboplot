@@ -12,6 +12,18 @@ const RENDERER_MAX_PIXELS: usize = 524288;
 /// Workgroup size defined in the shader.
 const RENDERER_WORKGROUP_SIZE: usize = 64;
 
+pub trait Renderer {
+    fn render(
+        &self,
+        chunk_samples: u32,
+        trace: &[f32],
+        w: u32,
+        h: u32,
+        offset: f32,
+        scale_y: f32,
+    ) -> Vec<u32>;
+}
+
 pub struct GpuRenderer {
     /// Connection to the compute device.
     device: Device,
@@ -251,8 +263,10 @@ impl GpuRenderer {
         drop(data);
         self.download_output_buffer.unmap();
     }
+}
 
-    pub fn render(
+impl Renderer for GpuRenderer {
+    fn render(
         &self,
         chunk_samples: u32,
         trace: &[f32],
@@ -260,7 +274,7 @@ impl GpuRenderer {
         h: u32,
         offset: f32,
         scale_y: f32,
-    ) {
+    ) -> Vec<u32> {
         self.load_trace(trace);
 
         // The command encoder allows us to record commands that we will later submit to the GPU.
@@ -310,5 +324,42 @@ impl GpuRenderer {
         self.queue
             .write_buffer(&self.params_buffer, 0, bytemuck::cast_slice(&[params]));
         self.queue.submit([command_buffer]);
+
+        let mut result = vec![0; (w * h) as usize];
+        self.read_result(&mut result);
+        result
+    }
+}
+
+pub struct CpuRenderer {}
+
+impl CpuRenderer {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+
+impl Renderer for CpuRenderer {
+    fn render(
+        &self,
+        chunk_samples: u32,
+        trace: &[f32],
+        w: u32,
+        h: u32,
+        offset: f32,
+        scale_y: f32,
+    ) -> Vec<u32> {
+        let mut result = vec![0; (w * h) as usize];
+        for i in 0..trace.len() - 1 {
+            let x = ((i as u32 * w) / chunk_samples).min(w - 1);
+            let p0 = trace[i] + offset;
+            let p1 = trace[i + 1] + offset;
+            let y0 = (h as i32 / 2) + (p0 * scale_y) as i32;
+            let y1 = (h as i32 / 2) + (p1 * scale_y) as i32;
+            for y in y0.min(y1)..=y0.max(y1) {
+                result[(x as i32 * h as i32 + y) as usize] += 1
+            }
+        }
+        result
     }
 }

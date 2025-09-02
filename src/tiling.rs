@@ -1,8 +1,8 @@
 use crate::{
-    renderer::GpuRenderer,
+    renderer::Renderer,
     util::{Fixed, FixedVec2},
 };
-use egui::{epaint::Hsva, lerp, Color32, ColorImage};
+use egui::{Color32, ColorImage, epaint::Hsva, lerp};
 use std::sync::{Arc, Condvar, Mutex};
 
 /// A library of tiles and their current rendering status and result.
@@ -110,17 +110,21 @@ pub struct TileProperties {
 }
 
 pub struct TilingRenderer {
+    renderer: Box<dyn Renderer>,
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
     trace: Vec<f32>,
-    gpu_renderer: GpuRenderer,
 }
 
 impl TilingRenderer {
-    pub fn new(shared_tiling: Arc<(Mutex<Tiling>, Condvar)>, trace: Vec<f32>) -> Self {
+    pub fn new(
+        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        trace: Vec<f32>,
+        renderer: Box<dyn Renderer>,
+    ) -> Self {
         Self {
+            renderer,
             shared_tiling,
             trace,
-            gpu_renderer: GpuRenderer::new(),
         }
     }
 
@@ -179,22 +183,18 @@ impl TilingRenderer {
         }
 
         let trace_chunk = &self.trace[i_start as usize..i_end.min(trace_len) as usize];
-        let mut result: Vec<u32> = Vec::new();
         if trace_chunk.is_empty() {
-            return result;
+            return vec![0; size.area() as usize];
         }
 
-        self.gpu_renderer.render(
+        self.renderer.render(
             (size.w as f32 * scale.x.to_num::<f32>()) as u32,
             trace_chunk,
             size.w,
             size.h,
             offset.to_num::<f32>(),
             scale.y.to_num::<f32>(),
-        );
-        result.resize(size.area() as usize, 0);
-        self.gpu_renderer.read_result(&mut result);
-        result
+        )
     }
 }
 
@@ -214,7 +214,7 @@ impl Gradient {
                 Color32::BLACK.lerp_to_gamma(*end, t)
             }
             Gradient::BiColor { start, end } => start.lerp_to_gamma(*end, x),
-            Gradient::Rainbow => Hsva::new(lerp(4.0/6.0..=0.0, x), 1.0, 1.0, 1.0).into(),
+            Gradient::Rainbow => Hsva::new(lerp(4.0 / 6.0..=0.0, x), 1.0, 1.0, 1.0).into(),
         }
     }
 

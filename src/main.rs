@@ -1,19 +1,19 @@
 use crate::{
     camera::Camera,
-    renderer::RENDERER_MAX_TRACE_SIZE,
+    renderer::{CpuRenderer, GpuRenderer, RENDERER_MAX_TRACE_SIZE, Renderer},
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
     util::{Fixed, format_number_unit, generate_checkboard},
 };
+use clap::{Parser, ValueEnum};
 use eframe::{App, egui};
 use egui::{
-    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions, Ui, pos2,
+    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions, Ui, Vec2, pos2,
 };
 use muscat::util::read_array1_from_npy_file;
 use ndarray::Array1;
 use npyz::NpyFile;
 use std::{
     collections::HashMap,
-    env,
     fs::File,
     io::BufReader,
     sync::{Arc, Condvar, Mutex},
@@ -264,7 +264,7 @@ impl Viewer {
                 });
                 // We also discard textures that are not used anymore.
                 self.textures
-                    .retain(|k, v| tiling.tiles.iter().find(|t| t.properties == *k).is_some());
+                    .retain(|k, _| tiling.tiles.iter().any(|t| t.properties == *k));
             } else {
                 // Some tiles have not been rendered yet, and maybe have been added to the pool.
                 // Wake-up the rendering thread if it was sleeping.
@@ -339,7 +339,7 @@ impl Viewer {
 
         let mul_y = (self.camera.scale.y / properties.scale.y).to_num::<f32>();
         let offset_y =
-            ((self.camera.shift.y - properties.offset) * self.camera.scale.y).to_num::<f32>();
+            ((self.camera.shift.y - properties.offset) * self.camera.scale.y).to_num::<f32>() / ppp;
         let y_mid = viewport.center().y;
         let y0 = y_mid - viewport.height() * mul_y * 0.5 + offset_y;
         let y1 = y_mid + viewport.height() * mul_y * 0.5 + offset_y;
@@ -401,31 +401,28 @@ impl App for Viewer {
 }
 
 fn main() {
-    let args: Vec<_> = env::args().collect();
+    let args = Args::parse();
 
-    if args.len() < 2 {
-        println!("Please specify a path to a numpy file.");
-        return;
-    }
-
-    if args.len() > 2 {
-        println!("Too many arguments.");
-        return;
-    }
-
-    let file = File::open(&args[1]).expect("Failed to open file");
+    let file = File::open(&args.path).expect("Failed to open file");
     let buf_reader = BufReader::new(file);
     let npy = NpyFile::new(buf_reader).expect("Failed to parse numpy file");
     let trace: Array1<i8> = read_array1_from_npy_file(npy);
     let trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
     let trace_len = trace.len();
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let mut renderer = TilingRenderer::new(shared_tiling.clone(), trace);
+    let shared_tiling_clone = shared_tiling.clone();
 
-    thread::spawn(move || renderer.render_loop());
+    thread::spawn(move || {
+        let renderer: Box<dyn Renderer> = match args.backend {
+            TileBackend::Cpu => Box::new(CpuRenderer::new()),
+            TileBackend::Gpu => Box::new(GpuRenderer::new()),
+        };
+        TilingRenderer::new(shared_tiling_clone, trace, renderer).render_loop();
+    });
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default(),
+        window_builder: Some(Box::new(|w| w.with_inner_size(Vec2::new(1280.0, 512.0)))),
         ..Default::default()
     };
 
@@ -441,4 +438,19 @@ fn main() {
         }),
     )
     .unwrap();
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum TileBackend {
+    Cpu,
+    Gpu,
+}
+
+#[derive(Parser)]
+struct Args {
+    /// Data file path.
+    path: String,
+    /// Tile rendering backend.
+    #[arg(long, short, value_enum, default_value_t=TileBackend::Gpu)]
+    backend: TileBackend,
 }
