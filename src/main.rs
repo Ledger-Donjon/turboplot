@@ -11,7 +11,7 @@ use egui::{
 };
 use muscat::util::read_array1_from_npy_file;
 use ndarray::Array1;
-use npyz::NpyFile;
+use npyz::{DType, NpyFile};
 use std::{
     collections::HashMap,
     fs::File,
@@ -408,8 +408,45 @@ fn main() {
     let file = File::open(&args.path).expect("Failed to open file");
     let buf_reader = BufReader::new(file);
     let npy = NpyFile::new(buf_reader).expect("Failed to parse numpy file");
-    let trace: Array1<i8> = read_array1_from_npy_file(npy);
-    let trace: Vec<f32> = trace.iter().map(|x| *x as f32).collect();
+    println!("Numpy data type: {}", npy.dtype().descr());
+
+    let DType::Plain(dtype) = npy.dtype().clone() else {
+        panic!("Invalid numpy data type")
+    };
+
+    let trace: Vec<f32> = match (dtype.type_char(), dtype.num_bytes()) {
+        (npyz::TypeChar::Int, Some(1)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: i8| x as f32)
+            .collect(),
+        (npyz::TypeChar::Int, Some(2)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: i16| x as f32)
+            .collect(),
+        (npyz::TypeChar::Int, Some(4)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: i32| x as f32)
+            .collect(),
+        (npyz::TypeChar::Uint, Some(1)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: u8| x as f32)
+            .collect(),
+        (npyz::TypeChar::Uint, Some(2)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: u16| x as f32)
+            .collect(),
+        (npyz::TypeChar::Uint, Some(4)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: u32| x as f32)
+            .collect(),
+        (npyz::TypeChar::Float, Some(4)) => read_array1_from_npy_file(npy).into_iter().collect(),
+        (npyz::TypeChar::Float, Some(8)) => read_array1_from_npy_file(npy)
+            .into_iter()
+            .map(|x: f64| x as f32)
+            .collect(),
+        _ => panic!("Unsupported data type"),
+    };
+
     let trace_len = trace.len();
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
     let shared_tiling_clone = shared_tiling.clone();
