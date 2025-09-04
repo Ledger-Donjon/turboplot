@@ -182,7 +182,7 @@ impl TilingRenderer {
             return vec![0; size.area() as usize];
         }
 
-        let trace_chunk = &self.trace[i_start as usize..i_end.min(trace_len) as usize];
+        let trace_chunk = &self.trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
         if trace_chunk.is_empty() {
             return vec![0; size.area() as usize];
         }
