@@ -33,7 +33,7 @@ mod util;
 const TILE_WIDTH: u32 = 64;
 
 /// Minimum zoom level that can be rendered by the GPU.
-const MIN_SCALE_X: usize = RENDERER_MAX_TRACE_SIZE / TILE_WIDTH as usize;
+const MIN_SCALE_X: usize = (RENDERER_MAX_TRACE_SIZE - 1) / TILE_WIDTH as usize;
 
 struct Viewer {
     /// Current camera settings.

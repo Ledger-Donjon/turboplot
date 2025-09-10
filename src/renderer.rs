@@ -5,7 +5,7 @@ use eframe::wgpu::{
 };
 use std::num::NonZeroU64;
 
-/// Maximum number of f32 trace points that can be sent to the GPU at once.
+/// Maximum number of f32 trace segments that can be sent to the GPU at once.
 pub const RENDERER_MAX_TRACE_SIZE: usize = 8 * 1024 * 1024 * 4;
 /// Maximum number of u32 pixels that can be calculated by the compute shader.
 const RENDERER_MAX_PIXELS: usize = 524288;
