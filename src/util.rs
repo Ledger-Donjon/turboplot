@@ -34,10 +34,28 @@ pub fn format_number_unit(n: usize) -> String {
     if n < 1000 {
         n.to_string()
     } else if n < 1000000 {
-        format!("{:.1}k", (n as f32) / 1000.0)
+        format!("{:.1} k", (n as f32) / 1000.0)
     } else if n < 1000000000 {
-        format!("{:.1}M", (n as f32) / 1e6)
+        format!("{:.1} M", (n as f32) / 1e6)
     } else {
-        format!("{:.1}G", (n as f32) / 1e9)
+        format!("{:.1} G", (n as f32) / 1e9)
+    }
+}
+
+pub fn format_f64_unit(x: f64) -> String {
+    if x < 1e-6 {
+        format!("{:.3} n", x * 1e9)
+    } else if x < Fixed::from_num(1e-3) {
+        format!("{:.3} µ", x * 1e6)
+    } else if x < Fixed::from_num(1) {
+        format!("{:.3} m", x * 1e3)
+    } else if x < Fixed::from_num(1000) {
+        format!("{:.3} ", x)
+    } else if x < Fixed::from_num(1e6) {
+        format!("{:.3} k", x / 1e3)
+    } else if x < Fixed::from_num(1e9) {
+        format!("{:.3} M", x / 1e6)
+    } else {
+        format!("{:.3} G", x / 1e9)
     }
 }

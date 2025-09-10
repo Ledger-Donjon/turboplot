@@ -2,13 +2,14 @@ use crate::{
     camera::Camera,
     renderer::{CpuRenderer, GpuRenderer, RENDERER_MAX_TRACE_SIZE, Renderer},
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
-    util::{Fixed, format_number_unit, generate_checkboard},
+    util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
 };
 use clap::{Parser, ValueEnum};
 use eframe::{App, egui};
 use egui::{
-    Color32, Key, Modifiers, Painter, Rect, Response, Sense, TextureHandle, TextureOptions, Ui,
-    Vec2, pos2,
+    Align, Color32, DragValue, FontFamily, Key, Modifiers, Painter, PointerButton, Rect, Response,
+    Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui, Vec2, pos2,
+    text::LayoutJob, vec2,
 };
 use muscat::util::read_array1_from_npy_file;
 use npyz::{DType, NpyFile};
@@ -16,7 +17,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
-    num::NonZero,
+    ops::RangeInclusive,
     sync::{Arc, Condvar, Mutex},
     thread::{self, available_parallelism},
 };
@@ -58,6 +59,10 @@ struct Viewer {
     trace_len: usize,
     /// When true, the viewer will change scale and offset so the trace fits the screen.
     autoscale_request: bool,
+    /// Trace sampling rate in MS/s
+    sampling_rate: f32,
+    /// Selected waveform time range (in samples).
+    range: RangeInclusive<Fixed>,
 }
 
 impl Viewer {
@@ -86,16 +91,22 @@ impl Viewer {
             texture_checkboard: generate_checkboard(ctx, 64),
             trace_len,
             autoscale_request: true,
+            sampling_rate: 100.0,
+            range: Fixed::from_num(0.0)..=Fixed::from_num(0.0),
         }
     }
 
     /// Toolbar widgets rendering.
     pub fn ui_toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "Trace: {} samples",
-                format_number_unit(self.trace_len)
-            ));
+            ui.label(format!("Trace: {}S", format_number_unit(self.trace_len)));
+
+            ui.label("@");
+            let drag = DragValue::new(&mut self.sampling_rate)
+                .suffix(" MS/s")
+                .range(1.0..=1000e9)
+                .speed(25.0);
+            ui.add(drag);
 
             egui::ComboBox::from_id_salt("display")
                 .selected_text(self.color_scale.gradient.name())
@@ -179,7 +190,7 @@ impl Viewer {
 
         let ppp = ctx.pixels_per_point();
         let size = ui.available_size();
-        let (response, painter) = ui.allocate_painter(size, Sense::click_and_drag());
+        let (response, painter) = ui.allocate_painter(size, Sense::drag());
         let (zoom_delta, pos) = ui.input(|i| (i.smooth_scroll_delta[1], i.pointer.latest_pos()));
         let zooming = zoom_delta != 0.0;
         if zooming {
@@ -199,15 +210,31 @@ impl Viewer {
         }
 
         let mut dragging_y = false;
-        if ui.input(|i| i.modifiers.alt) {
-            if response.drag_delta()[1] != 0.0 {
-                self.camera.shift.y +=
-                    Fixed::from_num(response.drag_delta()[1] * ppp) / self.camera.scale.y;
-                dragging_y = true;
+        if response.dragged_by(PointerButton::Secondary) {
+            if ui.input(|i| i.modifiers.alt) {
+                if response.drag_delta()[1] != 0.0 {
+                    self.camera.shift.y +=
+                        Fixed::from_num(response.drag_delta()[1] * ppp) / self.camera.scale.y;
+                    dragging_y = true;
+                }
+            } else if response.drag_delta()[0] != 0.0 {
+                self.camera.shift.x -=
+                    Fixed::from_num(response.drag_delta()[0] * ppp) * self.camera.scale.x;
             }
-        } else if response.drag_delta()[0] != 0.0 {
-            self.camera.shift.x -=
-                Fixed::from_num(response.drag_delta()[0] * ppp) * self.camera.scale.x;
+        }
+
+        let world_x = self.camera.screen_to_world_x(
+            &response.rect,
+            ppp,
+            response.hover_pos().map(|p| p.x).unwrap_or(0.0),
+        );
+
+        if response.drag_started_by(PointerButton::Primary) {
+            self.range = world_x..=world_x;
+        }
+
+        if response.dragged_by(PointerButton::Primary) {
+            self.range = *self.range.start()..=world_x;
         }
 
         if self.autoscale_request {
@@ -230,7 +257,7 @@ impl Viewer {
 
             let mut complete = true;
             for tile in required {
-                if self
+                complete &= self
                     .shared_tiling
                     .0
                     .lock()
@@ -238,10 +265,7 @@ impl Viewer {
                     .get(tile, true)
                     .unwrap()
                     .status
-                    != TileStatus::Rendered
-                {
-                    complete = false;
-                }
+                    == TileStatus::Rendered;
             }
 
             if complete {
@@ -264,6 +288,7 @@ impl Viewer {
         }
 
         self.paint_tiles(ctx, ppp, &painter, response.rect);
+        self.paint_range(ppp, &response.rect, &painter);
 
         if self.shared_tiling.0.lock().unwrap().has_pending() {
             // TODO: it would be better to request repaint only when the GPU renderer has finished
@@ -358,6 +383,90 @@ impl Viewer {
             Rect::from_min_max(pos2(0.0, 0.0), pos2(nx, ny)),
             Color32::from_gray(10),
         );
+    }
+
+    /// Paint the selection range.
+    fn paint_range(&self, ppp: f32, viewport: &Rect, painter: &Painter) {
+        let (start, end) = (*self.range.start(), *self.range.end());
+
+        // Don't paint if range is null.
+        if start == end {
+            return;
+        }
+
+        let (start, end) = (start.min(end), start.max(end)); // No negative range
+        let sample_count = end - start;
+        let duration = sample_count.to_num::<f64>() / (self.sampling_rate * 1e6) as f64;
+        let x0 = self.camera.world_to_screen_x(viewport, ppp, start);
+        let x1 = self.camera.world_to_screen_x(viewport, ppp, end);
+
+        let dx = 5.0; // Arrow size on X axis
+        let dy = 3.0; // Arrow radius on Y axis
+        let y = 80.5; // Base line for displaying arrows and text
+
+        let mut job = LayoutJob {
+            halign: Align::Center,
+            ..Default::default()
+        };
+        job.append(
+            &format!(
+                "{}s\n{} samples",
+                format_f64_unit(duration),
+                sample_count.ceil()
+            ),
+            0.0,
+            TextFormat {
+                font_id: egui::FontId::new(12.0, FontFamily::Proportional),
+                color: Color32::WHITE,
+                ..Default::default()
+            },
+        );
+        let galley = painter.layout_job(job);
+        let rect = galley
+            .rect
+            .translate(vec2(x0.midpoint(x1), 0.0))
+            .expand(4.0);
+        painter.galley(
+            pos2((x0 + x1) / 2.0, y - rect.height() / 2.0),
+            galley.clone(),
+            Color32::BLUE,
+        );
+
+        // Hide arrows smoothly when text is larger than range.
+        let arrows_opacity = ((rect.min.x - x0) * 0.04).clamp(0.0, 0.75);
+        let stroke = Stroke::new(1.0, Color32::WHITE.gamma_multiply(arrows_opacity));
+
+        painter.line(vec![pos2(x0, y), pos2(rect.min.x, y)], stroke);
+        painter.line(vec![pos2(rect.max.x, y), pos2(x1, y)], stroke);
+        painter.line(
+            vec![pos2(x0 + dx, y - dy), pos2(x0, y), pos2(x0 + dx, y + dy)],
+            stroke,
+        );
+        painter.line(
+            vec![pos2(x1 - dx, y - dy), pos2(x1, y), pos2(x1 - dx, y + dy)],
+            stroke,
+        );
+
+        // Draw vertical dashed bars
+        let stroke_white = Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.5));
+        let stroke_black = Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.5));
+        for x in [x0, x1] {
+            let line = Shape::dashed_line(
+                &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
+                stroke_white,
+                4.0,
+                4.0,
+            );
+            painter.add(line);
+            let line = Shape::dashed_line_with_offset(
+                &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
+                stroke_black,
+                &[4.0],
+                &[4.0],
+                4.0,
+            );
+            painter.add(line);
+        }
     }
 
     /// Calculates the set of tiles required to render the trace at full resolution in the viewport
