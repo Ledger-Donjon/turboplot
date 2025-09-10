@@ -1,5 +1,7 @@
 [package]
 name = "turboplot"
+description = "A blazingly fast waveform renderer made for visualizing huge traces"
+repository = "https://github.com/Ledger-Donjon/turboplot"
 version = "0.1.0"
 edition = "2024"
 
@@ -8,7 +10,7 @@ eframe = { version = "0.31.1", features = ["wgpu"] }
 egui = "0.31.1"
 pollster = "0.4.0"
 bytemuck = "1"
-muscat = { git = "https://github.com/Ledger-Donjon/muscat.git" }
+muscat = "0.3.0"
 npyz = "0.8.3"
 ndarray = "0.16.1"
 fixed = "1.29.0"
