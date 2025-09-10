@@ -33,15 +33,22 @@ impl Tiling {
 
     /// Returns true if there is at least one tile which is not rendered.
     pub fn has_pending(&self) -> bool {
-        self.next_pending().is_some()
+        self.tiles.iter().any(|t| t.status != TileStatus::Rendered)
     }
 
-    /// Get properties of next tile to be rendered. Returns `None` if there are no pending jobs.
-    pub fn next_pending(&self) -> Option<TileProperties> {
-        self.tiles
-            .iter()
+    /// Finds and returns a pending rendering, and tag it has being currently rendered.
+    /// If no pending job is available, `None` is returned.
+    pub fn take_job(&mut self) -> Option<TileProperties> {
+        if let Some(tile) = self
+            .tiles
+            .iter_mut()
             .find(|t| t.status == TileStatus::NotRendered)
-            .map(|t| t.properties)
+        {
+            tile.status = TileStatus::Rendering;
+            Some(tile.properties)
+        } else {
+            None
+        }
     }
 }
 
@@ -88,7 +95,11 @@ impl Tile {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum TileStatus {
+    /// The tile must be rendered.
     NotRendered,
+    /// A renderer is currently generating the tile.
+    Rendering,
+    /// The tile has been rendered.
     Rendered,
 }
 
@@ -109,16 +120,16 @@ pub struct TileProperties {
     pub size: TileSize,
 }
 
-pub struct TilingRenderer {
+pub struct TilingRenderer<'a> {
     renderer: Box<dyn Renderer>,
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-    trace: Vec<f32>,
+    trace: &'a Vec<f32>,
 }
 
-impl TilingRenderer {
+impl<'a> TilingRenderer<'a> {
     pub fn new(
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        trace: Vec<f32>,
+        trace: &'a Vec<f32>,
         renderer: Box<dyn Renderer>,
     ) -> Self {
         Self {
@@ -140,7 +151,7 @@ impl TilingRenderer {
     }
 
     fn render_next_tile(&mut self) {
-        let Some(properties) = self.shared_tiling.0.lock().unwrap().next_pending() else {
+        let Some(properties) = self.shared_tiling.0.lock().unwrap().take_job() else {
             return;
         };
         let data = self.render_tile(

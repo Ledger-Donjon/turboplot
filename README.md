@@ -2,7 +2,7 @@
 
 TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
 
-Traces are displayed using a density rendering algorithm performed on the GPU thanks to a compute shader, enabling very smooth navigation even with traces as big as 1 Giga samples! The density rendering allows analyzing traces easily on a large scale, while also preserving single-sample peaks visible.
+Traces are displayed using a density rendering algorithm distributed across GPU and CPU threads, enabling very smooth navigation even with traces as big as 1 Giga samples! The density rendering allows analyzing traces easily on a large scale, while also preserving single-sample peaks visible.
 
 ![screenshot](screenshot.png)
 
@@ -12,13 +12,14 @@ Traces are displayed using a density rendering algorithm performed on the GPU th
 cargo run --release -- waveform.npy
 ```
 
-Rendering is also possible using only CPU backend:
+By default TurboPlot will spawn 1 GPU rendering thread and the maximum CPU rendering threads the hardware can run simultaneously. To fit your needs, this can be changed by specifying the number of threads for each type of rendering backend:
 
 ```
-cargo run --release -- -b cpu waveform.npy
+# Disable use of GPU rendering backend, use only 1 CPU rendering thread.
+cargo run --release -- --gpu 0 --cpu 1 waveform.npy
 ```
 
-Note: In this mode, display still uses GPU. Only the trace rendering will be performed on the CPU.
+Note: In this mode, the user interface may still use the GPU; The trace rendering will be performed only on the CPU.
 
 ## License
 

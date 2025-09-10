@@ -7,17 +7,18 @@ use crate::{
 use clap::{Parser, ValueEnum};
 use eframe::{App, egui};
 use egui::{
-    Color32, Painter, Rect, Response, Sense, Spinner, TextureHandle, TextureOptions, Ui, Vec2, pos2,
+    Color32, Key, Modifiers, Painter, Rect, Response, Sense, TextureHandle, TextureOptions, Ui,
+    Vec2, pos2,
 };
 use muscat::util::read_array1_from_npy_file;
-use ndarray::Array1;
 use npyz::{DType, NpyFile};
 use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
+    num::NonZero,
     sync::{Arc, Condvar, Mutex},
-    thread,
+    thread::{self, available_parallelism},
 };
 mod camera;
 mod renderer;
@@ -146,17 +147,6 @@ impl Viewer {
                 .speed(0.05);
             ui.add(drag_opacity);
             self.autoscale_request |= ui.button("Auto").clicked();
-            {
-                let tiling = self.shared_tiling.0.lock().unwrap();
-                if tiling.has_pending() {
-                    ui.add(Spinner::new().color(self.color).size(10.0));
-                }
-                ui.label(format!(
-                    "{} tiles / {} textures",
-                    tiling.tiles.len(),
-                    self.textures.len()
-                ));
-            }
         });
     }
 
@@ -173,13 +163,12 @@ impl Viewer {
                     .corner_radius(4.0),
             )
             .show_separator_line(false)
-            .show(ctx, |ui| self.ui_toolbar(ui));
+            .show(ctx, |ui| {
+                self.ui_toolbar(ui);
+            });
     }
 
     pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui) {
-        //egui::Frame::default().fill(Color32::from_gray(30)).inner_margin(8.0).show(ui, |ui| self.ui_toolbar(ui));
-        //let frame = egui::Frame::default().fill(Color32::RED);
-
         // If color scale changes all textures become invalid. We destroy the textures cache.
         // The GPU rendering of the tiles remains valid, we just need to recreate the images from
         // the density data.
@@ -190,7 +179,7 @@ impl Viewer {
 
         let ppp = ctx.pixels_per_point();
         let size = ui.available_size();
-        let (response, painter) = ui.allocate_painter(size, Sense::drag());
+        let (response, painter) = ui.allocate_painter(size, Sense::click_and_drag());
         let (zoom_delta, pos) = ui.input(|i| (i.smooth_scroll_delta[1], i.pointer.latest_pos()));
         let zooming = zoom_delta != 0.0;
         if zooming {
@@ -449,15 +438,40 @@ fn main() {
 
     let trace_len = trace.len();
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let shared_tiling_clone = shared_tiling.clone();
+    let trace = Arc::new(trace);
 
-    thread::spawn(move || {
-        let renderer: Box<dyn Renderer> = match args.backend {
-            TileBackend::Cpu => Box::new(CpuRenderer::new()),
-            TileBackend::Gpu => Box::new(GpuRenderer::new()),
-        };
-        TilingRenderer::new(shared_tiling_clone, trace, renderer).render_loop();
-    });
+    for _ in 0..args.gpu {
+        let shared_tiling_clone = shared_tiling.clone();
+        let trace_clone = trace.clone();
+        thread::spawn(move || {
+            let renderer: Box<dyn Renderer> = Box::new(GpuRenderer::new());
+            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
+        });
+    }
+
+    let cpu_count =
+        args.cpu.unwrap_or(
+            available_parallelism()
+                .map(|x| x.get())
+                .unwrap_or_else(|_| {
+                    println!("Warning: failed to query available parallelism.");
+                    1
+                }),
+        );
+
+    println!(
+        "Using {} GPU threads and {} CPU threads.",
+        args.gpu, cpu_count
+    );
+
+    for _ in 0..cpu_count {
+        let shared_tiling_clone = shared_tiling.clone();
+        let trace_clone = trace.clone();
+        thread::spawn(move || {
+            let renderer: Box<dyn Renderer> = Box::new(CpuRenderer::new());
+            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
+        });
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default(),
@@ -489,7 +503,11 @@ enum TileBackend {
 struct Args {
     /// Data file path.
     path: String,
-    /// Tile rendering backend.
-    #[arg(long, short, value_enum, default_value_t=TileBackend::Gpu)]
-    backend: TileBackend,
+    /// Number of GPU rendering threads to spawn.
+    #[arg(long, short, default_value_t = 1)]
+    gpu: usize,
+    /// Number of CPU rendering threads to spawn. If not specified, TurboPlot will spawn as many
+    /// thread as the CPU can run simultaneously.
+    #[arg(long, short)]
+    cpu: Option<usize>,
 }
