@@ -1,5 +1,6 @@
 use egui::{Color32, ColorImage, TextureHandle, TextureOptions, TextureWrapMode};
 use fixed::{FixedI64, types::extra::U24};
+use std::ops::{Add, Mul};
 
 /// Fixed floating point number used by the viewer.
 pub type Fixed = FixedI64<U24>;
@@ -8,6 +9,28 @@ pub type Fixed = FixedI64<U24>;
 pub struct FixedVec2 {
     pub x: Fixed,
     pub y: Fixed,
+}
+
+impl Add for FixedVec2 {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+        }
+    }
+}
+
+impl Mul<Fixed> for FixedVec2 {
+    type Output = Self;
+
+    fn mul(self, rhs: Fixed) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+        }
+    }
 }
 
 pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {

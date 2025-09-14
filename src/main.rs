@@ -4,10 +4,10 @@ use crate::{
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
     util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
 };
-use clap::{Parser, ValueEnum};
+use clap::Parser;
 use eframe::{App, egui};
 use egui::{
-    Align, Color32, DragValue, FontFamily, Key, Modifiers, Painter, PointerButton, Rect, Response,
+    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Rect, Response,
     Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui, Vec2, pos2,
     text::LayoutJob, vec2,
 };
@@ -17,7 +17,6 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
-    ops::RangeInclusive,
     sync::{Arc, Condvar, Mutex},
     thread::{self, available_parallelism},
 };
@@ -42,6 +41,12 @@ struct Viewer {
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+    /// Current tool for mouse left button
+    tool: Tool,
+    /// Tool usage step.
+    tool_step: u8,
+    /// Time selected by the tool.
+    tool_times: Vec<Fixed>,
     /// Trace rendering color.
     color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
@@ -61,8 +66,6 @@ struct Viewer {
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
-    /// Selected waveform time range (in samples).
-    range: RangeInclusive<Fixed>,
 }
 
 impl Viewer {
@@ -84,6 +87,9 @@ impl Viewer {
         Self {
             camera: Camera::new(),
             shared_tiling,
+            tool: Tool::Move,
+            tool_step: 0,
+            tool_times: Vec::new(),
             color: Color32::WHITE,
             color_scale,
             previous_color_scale: color_scale,
@@ -92,7 +98,6 @@ impl Viewer {
             trace_len,
             autoscale_request: true,
             sampling_rate: 100.0,
-            range: Fixed::from_num(0.0)..=Fixed::from_num(0.0),
         }
     }
 
@@ -158,6 +163,20 @@ impl Viewer {
                 .speed(0.05);
             ui.add(drag_opacity);
             self.autoscale_request |= ui.button("Auto").clicked();
+
+            // Tool selection
+            let previous_tool = self.tool;
+            egui::ComboBox::from_id_salt("tool")
+                .selected_text(self.tool.name())
+                .show_ui(ui, |ui| {
+                    for x in [Tool::Move, Tool::Range, Tool::Count] {
+                        ui.selectable_value(&mut self.tool, x, x.name());
+                    }
+                });
+            if self.tool != previous_tool {
+                self.tool_times.clear();
+                self.tool_step = 0;
+            }
         });
     }
 
@@ -188,19 +207,39 @@ impl Viewer {
             self.previous_color_scale = self.color_scale;
         }
 
+        let (stable_dt, mut left_pressed, key_left, key_right, scroll_delta, pos, modifiers) = ctx
+            .input(|i| {
+                (
+                    i.stable_dt,
+                    i.pointer.button_pressed(PointerButton::Primary),
+                    i.key_down(Key::ArrowLeft),
+                    i.key_down(Key::ArrowRight),
+                    i.smooth_scroll_delta[1],
+                    i.pointer.latest_pos(),
+                    i.modifiers,
+                )
+            });
+
+        // All egui UI can be scaled up and down, like a page in a web browser.
+        // However we don't want the trace rendering to scale up, so there are some gymnastics with
+        // ppp during the painting.
         let ppp = ctx.pixels_per_point();
+
+        // Hack: discard click events when over the toolbar.
+        // We must find a better way for this using egui, but for the moment this is all I have.
+        left_pressed &= pos.map(|p| p.y).unwrap_or(0.0) > 42.0 * ppp;
+
         let size = ui.available_size();
         let (response, painter) = ui.allocate_painter(size, Sense::drag());
-        let (zoom_delta, pos) = ui.input(|i| (i.smooth_scroll_delta[1], i.pointer.latest_pos()));
-        let zooming = zoom_delta != 0.0;
+        let zooming = scroll_delta != 0.0;
         if zooming {
-            if ui.input(|i| i.modifiers.alt) {
+            if modifiers.alt {
                 // Change in Y scaling
-                let factor = Fixed::from_num(1.1f32.powf(zoom_delta / 40.0));
+                let factor = Fixed::from_num(1.1f32.powf(scroll_delta / 40.0));
                 self.camera.scale.y = (self.camera.scale.y * factor).max(Fixed::from_num(0.001));
             } else {
                 // Change in X scaling
-                let factor = Fixed::from_num(1.5f32.powf(-zoom_delta / 40.0));
+                let factor = Fixed::from_num(1.5f32.powf(-scroll_delta / 40.0));
                 let s1 = self.camera.scale.x;
                 let s2 = (s1 * factor).clamp(Fixed::from_num(1), Fixed::from_num(MIN_SCALE_X));
                 let k = Fixed::from_num(pos.unwrap().x - response.rect.width() / 2.0);
@@ -209,8 +248,19 @@ impl Viewer {
             }
         }
 
+        if key_left && !key_right {
+            self.camera.shift.x -= self.camera.scale.x * Fixed::from_num(1000.0 * stable_dt);
+            ctx.request_repaint();
+        }
+        if key_right && !key_left {
+            self.camera.shift.x += self.camera.scale.x * Fixed::from_num(1000.0 * stable_dt);
+            ctx.request_repaint();
+        }
+
         let mut dragging_y = false;
-        if response.dragged_by(PointerButton::Secondary) {
+        if response.dragged_by(PointerButton::Secondary)
+            || (response.dragged_by(PointerButton::Primary) && self.tool == Tool::Move)
+        {
             if ui.input(|i| i.modifiers.alt) {
                 if response.drag_delta()[1] != 0.0 {
                     self.camera.shift.y +=
@@ -223,18 +273,62 @@ impl Viewer {
             }
         }
 
-        let world_x = self.camera.screen_to_world_x(
-            &response.rect,
-            ppp,
-            response.hover_pos().map(|p| p.x).unwrap_or(0.0),
-        );
+        let world_x =
+            self.camera
+                .screen_to_world_x(&response.rect, ppp, pos.map(|p| p.x).unwrap_or(0.0));
 
-        if response.drag_started_by(PointerButton::Primary) {
-            self.range = world_x..=world_x;
-        }
-
-        if response.dragged_by(PointerButton::Primary) {
-            self.range = *self.range.start()..=world_x;
+        // Tool management
+        match self.tool {
+            Tool::Move => {}
+            Tool::Range => match self.tool_step {
+                0 => {
+                    if left_pressed {
+                        self.tool_times = vec![world_x, world_x];
+                        self.tool_step = 1;
+                    }
+                }
+                1 => {
+                    self.tool_times[1] = world_x;
+                    if left_pressed {
+                        self.tool_step = 2;
+                    }
+                }
+                2 => {
+                    if left_pressed {
+                        self.tool_times.clear();
+                        self.tool_step = 0;
+                    }
+                }
+                _ => panic!(),
+            },
+            Tool::Count => match self.tool_step {
+                0 => {
+                    if left_pressed {
+                        self.tool_times = vec![world_x, world_x];
+                        self.tool_step = 1;
+                    }
+                }
+                1 => {
+                    self.tool_times[1] = world_x;
+                    if left_pressed {
+                        self.tool_times.push(world_x);
+                        self.tool_step = 2;
+                    }
+                }
+                2 => {
+                    self.tool_times[2] = world_x;
+                    if left_pressed {
+                        self.tool_step = 3;
+                    }
+                }
+                3 => {
+                    if left_pressed {
+                        self.tool_times.clear();
+                        self.tool_step = 0;
+                    }
+                }
+                _ => panic!(),
+            },
         }
 
         if self.autoscale_request {
@@ -288,7 +382,7 @@ impl Viewer {
         }
 
         self.paint_tiles(ctx, ppp, &painter, response.rect);
-        self.paint_range(ppp, &response.rect, &painter);
+        self.paint_tool(ppp, &painter, &response.rect);
 
         if self.shared_tiling.0.lock().unwrap().has_pending() {
             // TODO: it would be better to request repaint only when the GPU renderer has finished
@@ -385,38 +479,143 @@ impl Viewer {
         );
     }
 
-    /// Paint the selection range.
-    fn paint_range(&self, ppp: f32, viewport: &Rect, painter: &Painter) {
-        let (start, end) = (*self.range.start(), *self.range.end());
-
-        // Don't paint if range is null.
-        if start == end {
+    /// Paint bars, ranges and labels from the selected tool.
+    fn paint_tool(&self, ppp: f32, painter: &Painter, viewport: &Rect) {
+        if self.tool_times.len() < 2 {
             return;
         }
 
-        let (start, end) = (start.min(end), start.max(end)); // No negative range
-        let sample_count = end - start;
-        let duration = sample_count.to_num::<f64>() / (self.sampling_rate * 1e6) as f64;
-        let x0 = self.camera.world_to_screen_x(viewport, ppp, start);
-        let x1 = self.camera.world_to_screen_x(viewport, ppp, end);
+        // Font used to draw column numbers for counting tool.
+        let font_id = egui::FontId::new(12.0, FontFamily::Proportional);
+
+        let (t0, t1) = (self.tool_times[0], self.tool_times[1]);
+        let (t0, t1) = (t0.min(t1), t0.max(t1)); // No negative range
+        let dt = t1 - t0;
+        let x0 = self.camera.world_to_screen_x(viewport, ppp, t0);
+        let x1 = self.camera.world_to_screen_x(viewport, ppp, t1);
+        let y_top = 80.5; // Base line for displaying ranges at the top.
+        let y_bot = viewport.max.y - 40.0; // Base line for counter at the bottop.
+        let dy = 30.0; // Distance in Y of secondary range.
+
+        match self.tool {
+            Tool::Move => {}
+            Tool::Range => {
+                self.paint_bar(painter, viewport, x0);
+                self.paint_bar(painter, viewport, x1);
+                self.paint_time_range(ppp, painter, viewport, y_top, t0, t1);
+            }
+            Tool::Count => {
+                self.paint_bar(painter, viewport, x0);
+                self.paint_bar(painter, viewport, x1);
+                if self.tool_step >= 2 {
+                    let t2 = self.tool_times[2];
+                    if t2 > t1 {
+                        // First counting mode: count by dt step.
+                        let mut t = t0 + dt;
+                        let mut index = 1;
+                        // prev_x used to center number label.
+                        let mut prev_x = self.camera.world_to_screen_x(viewport, ppp, t0);
+                        // We don't want to draw beyond viewport right edge.
+                        // TODO: ideally, do the same for left edge.
+                        let right_pos =
+                            self.camera.screen_to_world_x(viewport, ppp, viewport.max.x);
+                        while t < right_pos.min(t2 + dt) {
+                            let x = self.camera.world_to_screen_x(viewport, ppp, t);
+                            // Don't paint right bar twice.
+                            if index > 1 {
+                                self.paint_bar(painter, viewport, x);
+                            }
+                            painter.text(
+                                pos2((x + prev_x) / 2.0, y_bot),
+                                Align2::CENTER_CENTER,
+                                index.to_string(),
+                                font_id.clone(),
+                                Color32::WHITE,
+                            );
+                            t += dt;
+                            index += 1;
+                            prev_x = x;
+                        }
+                        self.paint_time_range(ppp, painter, viewport, y_top, t0, t - dt);
+                        self.paint_time_range(ppp, painter, viewport, y_top + dy, t0, t1);
+                    } else {
+                        // Second counting mode: divide the range.
+                        if (t2 - t0) > 0 {
+                            let count = (dt / (t2 - t0)).round().to_num::<usize>();
+                            // 2048 as upper limit to prevent crashes or lags.
+                            // This should be high enough anyway: the tool is difficult to use when
+                            // this high.
+                            if (count > 1) && (count <= 2048) {
+                                // prev_x used to center number label.
+                                let mut prev_x = self.camera.world_to_screen_x(viewport, ppp, t0);
+                                for i in 0..count {
+                                    let t =
+                                        (dt * Fixed::from_num(i + 1)) / Fixed::from_num(count) + t0;
+                                    let x = self.camera.world_to_screen_x(viewport, ppp, t);
+                                    // Right bar was already painted.
+                                    if i < count {
+                                        self.paint_bar(painter, viewport, x);
+                                    }
+                                    painter.text(
+                                        pos2((x + prev_x) / 2.0, y_bot),
+                                        Align2::CENTER_CENTER,
+                                        (i + 1).to_string(),
+                                        font_id.clone(),
+                                        Color32::WHITE,
+                                    );
+                                    prev_x = x;
+                                }
+                                // If count is 1, no need to paint twice the same time range.
+                                if count > 1 {
+                                    self.paint_time_range(
+                                        ppp,
+                                        painter,
+                                        viewport,
+                                        y_top + dy,
+                                        t0,
+                                        t0 + dt / Fixed::from_num(count),
+                                    );
+                                }
+                            }
+                        }
+                        self.paint_time_range(ppp, painter, viewport, y_top, t0, t1);
+                    }
+                } else {
+                    self.paint_time_range(ppp, painter, viewport, y_top, t0, t1);
+                }
+            }
+        }
+    }
+
+    /// Paint a time range to display the duration and number of sample between to times.
+    fn paint_time_range(
+        &self,
+        ppp: f32,
+        painter: &Painter,
+        viewport: &Rect,
+        y: f32,
+        t0: Fixed,
+        t1: Fixed,
+    ) {
+        let font_id = egui::FontId::new(12.0, FontFamily::Proportional);
+        let (t0, t1) = (t0.min(t1), t0.max(t1)); // No negative range
+        let dt = t1 - t0;
+        let duration = dt.to_num::<f64>() / (self.sampling_rate * 1e6) as f64;
+        let x0 = self.camera.world_to_screen_x(viewport, ppp, t0);
+        let x1 = self.camera.world_to_screen_x(viewport, ppp, t1);
 
         let dx = 5.0; // Arrow size on X axis
         let dy = 3.0; // Arrow radius on Y axis
-        let y = 80.5; // Base line for displaying arrows and text
 
         let mut job = LayoutJob {
             halign: Align::Center,
             ..Default::default()
         };
         job.append(
-            &format!(
-                "{}s\n{} samples",
-                format_f64_unit(duration),
-                sample_count.ceil()
-            ),
+            &format!("{}s\n{} samples", format_f64_unit(duration), dt.ceil()),
             0.0,
             TextFormat {
-                font_id: egui::FontId::new(12.0, FontFamily::Proportional),
+                font_id: font_id.clone(),
                 color: Color32::WHITE,
                 ..Default::default()
             },
@@ -446,27 +645,23 @@ impl Viewer {
             vec![pos2(x1 - dx, y - dy), pos2(x1, y), pos2(x1 - dx, y + dy)],
             stroke,
         );
+    }
 
-        // Draw vertical dashed bars
-        let stroke_white = Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.5));
-        let stroke_black = Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.5));
-        for x in [x0, x1] {
-            let line = Shape::dashed_line(
-                &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
-                stroke_white,
-                4.0,
-                4.0,
-            );
-            painter.add(line);
-            let line = Shape::dashed_line_with_offset(
-                &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
-                stroke_black,
-                &[4.0],
-                &[4.0],
-                4.0,
-            );
-            painter.add(line);
-        }
+    /// Paint a vertical dashed line.
+    fn paint_bar(&self, painter: &Painter, viewport: &Rect, x: f32) {
+        painter.add(Shape::dashed_line(
+            &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
+            Stroke::new(1.0, Color32::WHITE.gamma_multiply(0.5)),
+            4.0,
+            4.0,
+        ));
+        painter.add(Shape::dashed_line_with_offset(
+            &[pos2(x, viewport.min.y), pos2(x, viewport.max.y)],
+            Stroke::new(1.0, Color32::BLACK.gamma_multiply(0.5)),
+            &[4.0],
+            &[4.0],
+            4.0,
+        ));
     }
 
     /// Calculates the set of tiles required to render the trace at full resolution in the viewport
@@ -602,10 +797,24 @@ fn main() {
     .unwrap();
 }
 
-#[derive(Clone, Copy, ValueEnum)]
-enum TileBackend {
-    Cpu,
-    Gpu,
+#[derive(Copy, Clone, PartialEq, Eq)]
+enum Tool {
+    /// Pan the view.
+    Move,
+    /// Select time range.
+    Range,
+    /// Utility to count intervals using a time range and time indication.
+    Count,
+}
+
+impl Tool {
+    pub fn name(&self) -> &str {
+        match self {
+            Tool::Move => "Move",
+            Tool::Range => "Range",
+            Tool::Count => "Count",
+        }
+    }
 }
 
 #[derive(Parser)]

@@ -30,3 +30,9 @@ impl Camera {
         self.scale.x * Fixed::from_num(x * ppp - viewport.width() * ppp / 2.0) + self.shift.x
     }
 }
+
+impl Default for Camera {
+    fn default() -> Self {
+        Self::new()
+    }
+}
