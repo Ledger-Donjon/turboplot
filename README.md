@@ -4,6 +4,8 @@ TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces
 
 Traces are displayed using a density rendering algorithm distributed across GPU and CPU threads, enabling very smooth navigation even with traces as big as 1 Giga samples! The density rendering allows analyzing traces easily on a large scale, while also preserving single-sample peaks visible.
 
+When the sampling rate is configured, time intervals can be measured easily. The interval selection tools can also help in counting repetitive patterns in traces.
+
 ![screenshot](screenshot.png)
 
 # Usage
@@ -20,6 +22,17 @@ cargo run --release -- --gpu 0 --cpu 1 waveform.npy
 ```
 
 Note: In this mode, the user interface may still use the GPU; The trace rendering will be performed only on the CPU.
+
+Controls:
+- Horizontal panning is performed using left or right mouse buttons.
+- Vertical offset can be modified using Alt + left or right mouse drag.
+- Horizontal zoom is performed using mouse wheel.
+- Vertical zoom is performed using Alt + mouse wheel.
+- UI can be scaled up using Ctrl + =.
+
+## Limitations
+
+This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays. For the moment, only one trace can be displayed at a time.
 
 ## License
 
