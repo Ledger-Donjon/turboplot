@@ -62,6 +62,9 @@ struct Viewer {
     texture_checkboard: TextureHandle,
     /// Trace size
     trace_len: usize,
+    /// Trace min and max values.
+    /// Used for autoscaling.
+    trace_min_max: [f32; 2],
     /// When true, the viewer will change scale and offset so the trace fits the screen.
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
@@ -75,6 +78,7 @@ impl Viewer {
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
         trace_len: usize,
+        trace_min_max: [f32; 2],
     ) -> Self {
         let color_scale = ColorScale {
             power: 1.0,
@@ -96,6 +100,7 @@ impl Viewer {
             textures: HashMap::default(),
             texture_checkboard: generate_checkboard(ctx, 64),
             trace_len,
+            trace_min_max,
             autoscale_request: true,
             sampling_rate: 100.0,
         }
@@ -337,6 +342,10 @@ impl Viewer {
             self.camera.scale.x = (trace_len / Fixed::from_num(response.rect.width() * ppp))
                 .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
+            self.camera.scale.y = Fixed::from_num(
+                ((response.rect.height() * ppp) * 0.75) / (self.trace_min_max[1] - self.trace_min_max[0]),
+            );
+            self.camera.shift.y = -Fixed::from_num(self.trace_min_max[0].midpoint(self.trace_min_max[1]));
         }
 
         // Draw a background checkboard to show zones that are not rendered yet.
@@ -741,6 +750,18 @@ fn main() {
     };
 
     let trace_len = trace.len();
+    let trace_min_max = [
+        trace
+            .iter()
+            .cloned()
+            .min_by(f32::total_cmp)
+            .expect("Trace has NaN sample"),
+        trace
+            .iter()
+            .cloned()
+            .max_by(f32::total_cmp)
+            .expect("Trace has NaN sample"),
+    ];
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
     let trace = Arc::new(trace);
 
@@ -791,6 +812,7 @@ fn main() {
                 &_cc.egui_ctx,
                 shared_tiling,
                 trace_len,
+                trace_min_max,
             )))
         }),
     )
