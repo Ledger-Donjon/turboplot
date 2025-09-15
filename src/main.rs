@@ -242,7 +242,7 @@ impl Viewer {
                 // Change in Y scaling
                 let factor = Fixed::from_num(1.1f32.powf(scroll_delta / 40.0));
                 self.camera.scale.y = (self.camera.scale.y * factor).max(Fixed::from_num(0.001));
-            } else {
+            } else if pos.is_some() {
                 // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-scroll_delta / 40.0));
                 let s1 = self.camera.scale.x;
