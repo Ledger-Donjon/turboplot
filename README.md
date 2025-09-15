@@ -8,7 +8,22 @@ When the sampling rate is configured, time intervals can be measured easily. The
 
 ![screenshot](screenshot.png)
 
-# Usage
+## Installation
+
+Rust shall be installed on your system (see [instructions](https://www.rust-lang.org/tools/install) for installation).
+TurboPlot can be directly installed by cargo:
+
+```
+cargo install turboplot
+```
+
+## Usage
+
+```
+turboplot waveform.py
+```
+
+Alternatively, you can build and run by cloning this repository and execute:
 
 ```
 cargo run --release -- waveform.npy
@@ -18,7 +33,7 @@ By default TurboPlot will spawn 1 GPU rendering thread and the maximum CPU rende
 
 ```
 # Disable use of GPU rendering backend, use only 1 CPU rendering thread.
-cargo run --release -- --gpu 0 --cpu 1 waveform.npy
+turboplot --gpu 0 --cpu 1 waveform.npy
 ```
 
 Note: In this mode, the user interface may still use the GPU; The trace rendering will be performed only on the CPU.
