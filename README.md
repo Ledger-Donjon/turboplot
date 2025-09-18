@@ -20,7 +20,7 @@ cargo install turboplot
 ## Usage
 
 ```
-turboplot waveform.py
+turboplot waveform.npy
 ```
 
 Alternatively, you can build and run by cloning this repository and execute:
