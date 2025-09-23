@@ -17,6 +17,7 @@ use std::{
     collections::HashMap,
     fs::File,
     io::BufReader,
+    ops::Add,
     sync::{Arc, Condvar, Mutex},
     thread::{self, available_parallelism},
 };
@@ -36,7 +37,12 @@ const TILE_WIDTH: u32 = 64;
 /// Minimum zoom level that can be rendered by the GPU.
 const MIN_SCALE_X: usize = (RENDERER_MAX_TRACE_SIZE - 1) / TILE_WIDTH as usize;
 
-struct Viewer {
+/// Defines the zoom limit between antialiased lines display and density rendering.
+const LINES_RENDERING_SCALE_LIMIT: f32 = 5.0;
+
+struct Viewer<'a> {
+    /// The trace being displayed.
+    trace: &'a Vec<f32>,
     /// Current camera settings.
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
@@ -71,12 +77,13 @@ struct Viewer {
     sampling_rate: f32,
 }
 
-impl Viewer {
+impl<'a> Viewer<'a> {
     pub const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
     pub fn new(
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        trace: &'a Vec<f32>,
         trace_len: usize,
         trace_min_max: [f32; 2],
     ) -> Self {
@@ -89,6 +96,7 @@ impl Viewer {
             },
         };
         Self {
+            trace,
             camera: Camera::new(),
             shared_tiling,
             tool: Tool::Move,
@@ -204,14 +212,6 @@ impl Viewer {
     }
 
     pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui) {
-        // If color scale changes all textures become invalid. We destroy the textures cache.
-        // The GPU rendering of the tiles remains valid, we just need to recreate the images from
-        // the density data.
-        if self.color_scale != self.previous_color_scale {
-            self.textures.clear();
-            self.previous_color_scale = self.color_scale;
-        }
-
         let (stable_dt, mut left_pressed, key_left, key_right, scroll_delta, pos, modifiers) = ctx
             .input(|i| {
                 (
@@ -246,7 +246,7 @@ impl Viewer {
                 // Change in X scaling
                 let factor = Fixed::from_num(1.5f32.powf(-scroll_delta / 40.0));
                 let s1 = self.camera.scale.x;
-                let s2 = (s1 * factor).clamp(Fixed::from_num(1), Fixed::from_num(MIN_SCALE_X));
+                let s2 = (s1 * factor).clamp(Fixed::from_num(0.01), Fixed::from_num(MIN_SCALE_X));
                 let k = Fixed::from_num(pos.unwrap().x - response.rect.width() / 2.0);
                 self.camera.shift.x = s1 * k + self.camera.shift.x - s2 * k;
                 self.camera.scale.x = s2;
@@ -343,62 +343,124 @@ impl Viewer {
                 .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
             self.camera.scale.y = Fixed::from_num(
-                ((response.rect.height() * ppp) * 0.75) / (self.trace_min_max[1] - self.trace_min_max[0]),
+                ((response.rect.height() * ppp) * 0.75)
+                    / (self.trace_min_max[1] - self.trace_min_max[0]),
             );
-            self.camera.shift.y = -Fixed::from_num(self.trace_min_max[0].midpoint(self.trace_min_max[1]));
+            self.camera.shift.y =
+                -Fixed::from_num(self.trace_min_max[0].midpoint(self.trace_min_max[1]));
         }
 
-        // Draw a background checkboard to show zones that are not rendered yet.
-        self.paint_checkboard(&response, &painter);
+        let mode = if self.camera.scale.x < LINES_RENDERING_SCALE_LIMIT {
+            RenderMode::Lines
+        } else {
+            RenderMode::Density
+        };
 
-        // New tiles are requested when moving the camera has finished. While we are zooming or
-        // changing Y offset, we use previous tiles to render a preview.
-        if !zooming && !dragging_y {
-            // Calculate the set of tiles which must be rendered to cover all the current screen with
-            // the current camera scale and offsets.
-            let required = self.compute_viewport_tiles(response.rect * ppp);
+        match mode {
+            RenderMode::Density => {
+                // If color scale changes all textures become invalid. We destroy the textures
+                // cache. The GPU rendering of the tiles remains valid, we just need to recreate
+                // the images from the density data.
+                if (self.color_scale != self.previous_color_scale) && (mode == RenderMode::Density)
+                {
+                    self.textures.clear();
+                    self.previous_color_scale = self.color_scale;
+                }
+                // New tiles are requested when moving the camera has finished. While we are zooming or
+                // changing Y offset, we use previous tiles to render a preview.
+                if !zooming && !dragging_y {
+                    // Calculate the set of tiles which must be rendered to cover all the current screen with
+                    // the current camera scale and offsets.
+                    let required = self.compute_viewport_tiles(response.rect * ppp);
 
-            let mut complete = true;
-            for tile in required {
-                complete &= self
-                    .shared_tiling
-                    .0
-                    .lock()
-                    .unwrap()
-                    .get(tile, true)
-                    .unwrap()
-                    .status
-                    == TileStatus::Rendered;
+                    let mut complete = true;
+                    for tile in required {
+                        complete &= self
+                            .shared_tiling
+                            .0
+                            .lock()
+                            .unwrap()
+                            .get(tile, true)
+                            .unwrap()
+                            .status
+                            == TileStatus::Rendered;
+                    }
+
+                    if complete {
+                        // All the tiles required to render the trace perfectly with current camera
+                        // settings have been rendered by the GPU. We can therefore discard all other
+                        // previous tiles which were used for the preview.
+                        let mut tiling = self.shared_tiling.0.lock().unwrap();
+                        tiling.tiles.retain(|t| {
+                            (t.properties.scale == self.camera.scale)
+                                && (t.properties.offset == self.camera.shift.y)
+                        });
+                        // We also discard textures that are not used anymore.
+                        self.textures
+                            .retain(|k, _| tiling.tiles.iter().any(|t| t.properties == *k));
+                    } else {
+                        // Some tiles have not been rendered yet, and maybe have been added to the pool.
+                        // Wake-up the rendering thread if it was sleeping.
+                        self.shared_tiling.1.notify_one();
+                    }
+                }
+
+                // Draw a background checkboard to show zones that are not rendered yet.
+                self.paint_checkboard(&response, &painter);
+
+                self.paint_tiles(ctx, ppp, &painter, response.rect);
+
+                if self.shared_tiling.0.lock().unwrap().has_pending() {
+                    // TODO: it would be better to request repaint only when the GPU renderer has finished
+                    // rendering a tile. This would reduce CPU usage but requires extra thread
+                    // synchronization mechanisms.
+                    ctx.request_repaint();
+                }
             }
-
-            if complete {
-                // All the tiles required to render the trace perfectly with current camera
-                // settings have been rendered by the GPU. We can therefore discard all other
-                // previous tiles which were used for the preview.
-                let mut tiling = self.shared_tiling.0.lock().unwrap();
-                tiling.tiles.retain(|t| {
-                    (t.properties.scale == self.camera.scale)
-                        && (t.properties.offset == self.camera.shift.y)
-                });
-                // We also discard textures that are not used anymore.
-                self.textures
-                    .retain(|k, _| tiling.tiles.iter().any(|t| t.properties == *k));
-            } else {
-                // Some tiles have not been rendered yet, and maybe have been added to the pool.
-                // Wake-up the rendering thread if it was sleeping.
-                self.shared_tiling.1.notify_one();
+            RenderMode::Lines => {
+                self.paint_black_background(&painter, response.rect);
+                self.paint_waveform_as_lines(ppp, &painter, &response.rect);
             }
         }
 
-        self.paint_tiles(ctx, ppp, &painter, response.rect);
         self.paint_tool(ppp, &painter, &response.rect);
+    }
 
-        if self.shared_tiling.0.lock().unwrap().has_pending() {
-            // TODO: it would be better to request repaint only when the GPU renderer has finished
-            // rendering a tile. This would reduce CPU usage but requires extra thread
-            // synchronization mechanisms.
-            ctx.request_repaint();
-        }
+    /// Paint the waveform as lines using egui painter. This is more suited for high zoom values
+    /// and benefits from lines antialiasing.
+    fn paint_waveform_as_lines(&self, ppp: f32, painter: &Painter, viewport: &Rect) {
+        let t0 = self
+            .camera
+            .screen_to_world_x(viewport, ppp, 0.0)
+            .floor()
+            .to_num::<isize>()
+            .clamp(0, self.trace.len() as isize) as usize;
+        let t1 = self
+            .camera
+            .screen_to_world_x(viewport, ppp, viewport.max.x)
+            .ceil()
+            .to_num::<isize>()
+            .add(1)
+            .clamp(0, self.trace.len() as isize) as usize;
+        let points = (t0..t1)
+            .into_iter()
+            .map(|t| {
+                let x = self
+                    .camera
+                    .world_to_screen_x(viewport, ppp, Fixed::from_num(t));
+                let y = (self.trace[t] + self.camera.shift.y.to_num::<f32>())
+                    * self.camera.scale.y.to_num::<f32>()
+                    / ppp
+                    + viewport.center().y;
+                pos2(x, y)
+            })
+            .collect();
+        let color = match self.color_scale.gradient {
+            Gradient::SingleColor { min: _, end } => end,
+            Gradient::BiColor { start, end: _ } => start,
+            Gradient::Rainbow => Color32::RED,
+        };
+        painter.line(points, Stroke::new(1.0, color));
     }
 
     /// Paint all the tiles that are available in the tiling set. This includes tiles rendered with
@@ -472,6 +534,11 @@ impl Viewer {
             ),
         };
         painter.image(tex.into(), rect, Self::UV, self.color);
+    }
+
+    /// Draw a black rectangle on all the surface of the given painter.
+    fn paint_black_background(&self, painter: &Painter, viewport: Rect) {
+        painter.rect_filled(viewport, 0.0, Color32::BLACK);
     }
 
     /// Draw a checkboard on all the surface of the given painter.
@@ -698,7 +765,7 @@ impl Viewer {
     }
 }
 
-impl App for Viewer {
+impl<'a> App for Viewer<'a> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.ui(ctx);
     }
@@ -811,6 +878,7 @@ fn main() {
             Ok(Box::new(Viewer::new(
                 &_cc.egui_ctx,
                 shared_tiling,
+                &trace,
                 trace_len,
                 trace_min_max,
             )))
@@ -837,6 +905,12 @@ impl Tool {
             Tool::Count => "Count",
         }
     }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RenderMode {
+    Density,
+    Lines,
 }
 
 #[derive(Parser)]
