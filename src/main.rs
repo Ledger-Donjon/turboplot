@@ -268,7 +268,7 @@ impl<'a> Viewer<'a> {
         {
             if ui.input(|i| i.modifiers.alt) {
                 if response.drag_delta()[1] != 0.0 {
-                    self.camera.shift.y +=
+                    self.camera.shift.y -=
                         Fixed::from_num(response.drag_delta()[1] * ppp) / self.camera.scale.y;
                     dragging_y = true;
                 }
@@ -443,15 +443,14 @@ impl<'a> Viewer<'a> {
             .add(1)
             .clamp(0, self.trace.len() as isize) as usize;
         let points = (t0..t1)
-            .into_iter()
             .map(|t| {
                 let x = self
                     .camera
                     .world_to_screen_x(viewport, ppp, Fixed::from_num(t));
-                let y = (self.trace[t] + self.camera.shift.y.to_num::<f32>())
-                    * self.camera.scale.y.to_num::<f32>()
-                    / ppp
-                    + viewport.center().y;
+                let y = viewport.center().y
+                    - (self.trace[t] + self.camera.shift.y.to_num::<f32>())
+                        * self.camera.scale.y.to_num::<f32>()
+                        / ppp;
                 pos2(x, y)
             })
             .collect();
@@ -520,7 +519,7 @@ impl<'a> Viewer<'a> {
 
         let mul_y = (self.camera.scale.y / properties.scale.y).to_num::<f32>();
         let offset_y =
-            ((self.camera.shift.y - properties.offset) * self.camera.scale.y).to_num::<f32>() / ppp;
+            ((properties.offset - self.camera.shift.y) * self.camera.scale.y).to_num::<f32>() / ppp;
         let y_mid = viewport.center().y;
         let y0 = y_mid - viewport.height() * mul_y * 0.5 + offset_y;
         let y1 = y_mid + viewport.height() * mul_y * 0.5 + offset_y;

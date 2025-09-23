@@ -34,7 +34,7 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     let i_end = min(params.trace_samples, u32(f32(params.chunk_samples) * (f32(pix_x + 1) / f32(params.w))));
     
     let mid = f32(params.h / 2);
-    let y = f32(pix_y) - mid;
+    let y = mid - f32(pix_y);
 
     // Following is the rendering algorithm with easy-to-read implementation.
     // For each trace segment, we test if the ordinate of the current pixel is included in the

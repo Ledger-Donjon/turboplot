@@ -354,8 +354,8 @@ impl Renderer for CpuRenderer {
             let x = ((i as u32 * w) / chunk_samples).min(w - 1);
             let p0 = trace[i] + offset;
             let p1 = trace[i + 1] + offset;
-            let y0 = (h as f32 / 2.0) + (p0 * scale_y);
-            let y1 = (h as f32 / 2.0) + (p1 * scale_y);
+            let y0 = (h as f32 / 2.0) - (p0 * scale_y);
+            let y1 = (h as f32 / 2.0) - (p1 * scale_y);
             let (y0, y1) = (y0.min(y1).ceil() as i32, y0.max(y1).floor() as i32);
             for y in y0.max(0)..=y1.min(h as i32 - 1) {
                 result[(x as i32 * h as i32 + y) as usize] += 1
