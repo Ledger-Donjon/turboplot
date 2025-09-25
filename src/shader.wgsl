@@ -1,5 +1,6 @@
 struct Params {
     chunk_samples: u32,
+    // Must be >= 1.
     trace_samples: u32,
     pixel_count: u32,
     w: u32,
@@ -30,8 +31,8 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     var density: u32 = 0;
 
     // Calculate the trace range for the current pixel column.
-    let i_start = min(params.trace_samples, u32(f32(params.chunk_samples) * (f32(pix_x) / f32(params.w))));
-    let i_end = min(params.trace_samples, u32(f32(params.chunk_samples) * (f32(pix_x + 1) / f32(params.w))));
+    let i_start = min(params.trace_samples - 1, u32(f32(params.chunk_samples) * (f32(pix_x) / f32(params.w))));
+    let i_end = min(params.trace_samples - 1, u32(f32(params.chunk_samples) * (f32(pix_x + 1) / f32(params.w))));
     
     let mid = f32(params.h / 2);
     let y = mid - f32(pix_y);

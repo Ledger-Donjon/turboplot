@@ -1,5 +1,9 @@
 # TurboPlot Changelog
 
+## [0.2.2] - 2025-09-25
+
+- Faster implementation of CPU renderer.
+
 ## [0.2.1] - 2025-09-23
 
 - Fixed reverted Y-axis orientation.

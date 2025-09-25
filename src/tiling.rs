@@ -194,7 +194,9 @@ impl<'a> TilingRenderer<'a> {
         }
 
         let trace_chunk = &self.trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
-        if trace_chunk.is_empty() {
+
+        // We need at least 2 points to have one segment.
+        if trace_chunk.len() < 2 {
             return vec![0; size.area() as usize];
         }
 
