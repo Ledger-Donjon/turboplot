@@ -108,6 +108,8 @@ pub enum TileStatus {
 /// different as well.
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
 pub struct TileProperties {
+    /// ID of the viewer using the tile.
+    pub id: u32,
     /// Rendering scale.
     /// For x-axis, this is the number of samples for each pixel column.
     pub scale: FixedVec2,
@@ -123,19 +125,19 @@ pub struct TileProperties {
 pub struct TilingRenderer<'a> {
     renderer: Box<dyn Renderer>,
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-    trace: &'a Vec<f32>,
+    traces: &'a Vec<Vec<f32>>,
 }
 
 impl<'a> TilingRenderer<'a> {
     pub fn new(
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        trace: &'a Vec<f32>,
+        traces: &'a Vec<Vec<f32>>,
         renderer: Box<dyn Renderer>,
     ) -> Self {
         Self {
             renderer,
             shared_tiling,
-            trace,
+            traces,
         }
     }
 
@@ -155,6 +157,7 @@ impl<'a> TilingRenderer<'a> {
             return;
         };
         let data = self.render_tile(
+            properties.id,
             properties.index,
             properties.offset,
             properties.scale,
@@ -180,12 +183,14 @@ impl<'a> TilingRenderer<'a> {
     /// Renders the tile starting a sample `index` for the given scales `scale_x` and `scale_y`.
     fn render_tile(
         &mut self,
+        id: u32,
         index: i32,
         offset: Fixed,
         scale: FixedVec2,
         size: TileSize,
     ) -> Vec<u32> {
-        let trace_len = self.trace.len() as i32;
+        let trace: &Vec<f32> = &self.traces[id as usize];
+        let trace_len = trace.len() as i32;
         let i_start = (index as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
         let i_end = ((index + 1) as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
 
@@ -193,7 +198,7 @@ impl<'a> TilingRenderer<'a> {
             return vec![0; size.area() as usize];
         }
 
-        let trace_chunk = &self.trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
+        let trace_chunk = &trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
 
         // We need at least 2 points to have one segment.
         if trace_chunk.len() < 2 {

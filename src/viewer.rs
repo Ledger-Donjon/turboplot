@@ -30,6 +30,9 @@ const MIN_SCALE_X: usize = (RENDERER_MAX_TRACE_SIZE - 1) / TILE_WIDTH as usize;
 const LINES_RENDERING_SCALE_LIMIT: f32 = 5.0;
 
 pub struct Viewer<'a> {
+    /// Viewer identifier used to distinguish tiles in the shared tiling in case there are multiple
+    /// viewers.
+    id: u32,
     /// The trace being displayed.
     trace: &'a Vec<f32>,
     /// Current camera settings.
@@ -55,8 +58,6 @@ pub struct Viewer<'a> {
     /// The texture used to draw the background checkboard.
     /// This texture is not loaded from a file but generated during initialization.
     texture_checkboard: TextureHandle,
-    /// Trace size
-    trace_len: usize,
     /// Trace min and max values.
     /// Used for autoscaling.
     trace_min_max: [f32; 2],
@@ -70,12 +71,23 @@ impl<'a> Viewer<'a> {
     pub const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
     pub fn new(
+        id: u32,
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
         trace: &'a Vec<f32>,
-        trace_len: usize,
-        trace_min_max: [f32; 2],
     ) -> Self {
+        let trace_min_max = [
+            trace
+                .iter()
+                .cloned()
+                .min_by(f32::total_cmp)
+                .expect("Trace has NaN sample"),
+            trace
+                .iter()
+                .cloned()
+                .max_by(f32::total_cmp)
+                .expect("Trace has NaN sample"),
+        ];
         let color_scale = ColorScale {
             power: 1.0,
             opacity: 10.0,
@@ -85,6 +97,7 @@ impl<'a> Viewer<'a> {
             },
         };
         Self {
+            id,
             trace,
             camera: Camera::new(),
             shared_tiling,
@@ -96,7 +109,6 @@ impl<'a> Viewer<'a> {
             previous_color_scale: color_scale,
             textures: HashMap::default(),
             texture_checkboard: generate_checkboard(ctx, 64),
-            trace_len,
             trace_min_max,
             autoscale_request: true,
             sampling_rate: 100.0,
@@ -106,7 +118,7 @@ impl<'a> Viewer<'a> {
     /// Toolbar widgets rendering.
     pub fn ui_toolbar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.label(format!("Trace: {}S", format_number_unit(self.trace_len)));
+            ui.label(format!("Trace: {}S", format_number_unit(self.trace.len())));
 
             ui.label("@");
             let drag = DragValue::new(&mut self.sampling_rate)
@@ -182,11 +194,11 @@ impl<'a> Viewer<'a> {
         });
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::default().outer_margin(0.0))
-            .show(ctx, |ui| self.ui_waveform(ctx, ui));
-        egui::TopBottomPanel::top("toolbar")
+    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut Ui, viewport: Rect) {
+        egui::Window::new(format!("toolbar{}", self.id))
+            .title_bar(false)
+            .resizable(false)
+            .anchor(Align2::LEFT_TOP, vec2(0.0, viewport.top()))
             .frame(
                 egui::Frame::default()
                     .fill(Color32::from_rgba_unmultiplied(30, 30, 30, 200))
@@ -194,13 +206,15 @@ impl<'a> Viewer<'a> {
                     .outer_margin(8.0)
                     .corner_radius(4.0),
             )
-            .show_separator_line(false)
+            .min_width(viewport.width() - 32.0)
             .show(ctx, |ui| {
-                self.ui_toolbar(ui);
+                ui.set_width(viewport.width() - 32.0);
+                self.ui_toolbar(ui)
             });
+        self.ui_waveform(ctx, ui, viewport);
     }
 
-    pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui) {
+    pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui, viewport: Rect) {
         let (stable_dt, mut left_pressed, key_left, key_right, scroll_delta, pos, modifiers) = ctx
             .input(|i| {
                 (
@@ -223,8 +237,8 @@ impl<'a> Viewer<'a> {
         // We must find a better way for this using egui, but for the moment this is all I have.
         left_pressed &= pos.map(|p| p.y).unwrap_or(0.0) > 42.0 * ppp;
 
-        let size = ui.available_size();
-        let (response, painter) = ui.allocate_painter(size, Sense::drag());
+        let response = ui.allocate_rect(viewport, Sense::drag());
+        let painter = ui.painter().with_clip_rect(viewport);
         let zooming = scroll_delta != 0.0;
         if zooming {
             if modifiers.alt {
@@ -327,7 +341,7 @@ impl<'a> Viewer<'a> {
 
         if self.autoscale_request {
             self.autoscale_request = false;
-            let trace_len = Fixed::from_num(self.trace_len);
+            let trace_len = Fixed::from_num(self.trace.len());
             self.camera.scale.x = (trace_len / Fixed::from_num(response.rect.width() * ppp))
                 .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
@@ -381,8 +395,10 @@ impl<'a> Viewer<'a> {
                         // previous tiles which were used for the preview.
                         let mut tiling = self.shared_tiling.0.lock().unwrap();
                         tiling.tiles.retain(|t| {
-                            (t.properties.scale == self.camera.scale)
-                                && (t.properties.offset == self.camera.shift.y)
+                            ((t.properties.scale == self.camera.scale)
+                                && (t.properties.offset == self.camera.shift.y))
+                                // Don't remove tiles from other viewers!
+                                || (t.properties.id != self.id)
                         });
                         // We also discard textures that are not used anymore.
                         self.textures
@@ -469,6 +485,7 @@ impl<'a> Viewer<'a> {
             .tiles
             .iter()
             .map(|t| t.properties)
+            .filter(|p| p.id == self.id)
             .collect();
 
         for p in properties {
@@ -744,6 +761,7 @@ impl<'a> Viewer<'a> {
         tile_indexes
             .iter()
             .map(|&index| TileProperties {
+                id: self.id,
                 scale: self.camera.scale,
                 index,
                 offset: self.camera.shift.y,

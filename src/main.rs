@@ -6,7 +6,7 @@ use crate::{
 };
 use clap::Parser;
 use eframe::{App, egui};
-use egui::Vec2;
+use egui::{Rect, Vec2, pos2};
 use std::{
     fs::File,
     io::BufReader,
@@ -24,8 +24,9 @@ mod viewer;
 /// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
 #[derive(Parser)]
 struct Args {
-    /// Data file path.
-    path: String,
+    /// Data file paths.
+    #[arg(required = true, num_args = 1..)]
+    paths: Vec<String>,
     /// Trace file format. If not specified, TurboPlot will guess from file extension.
     #[arg(long, short)]
     format: Option<TraceFormat>,
@@ -48,38 +49,28 @@ struct Args {
 fn main() {
     let args = Args::parse();
 
-    let Some(format) = args.format.or_else(|| guess_format(&args.path)) else {
-        println!("Unrecognized file extension. Please specify trace format.");
-        return;
-    };
+    let mut traces = Vec::new();
+    for path in args.paths {
+        let Some(format) = args.format.or_else(|| guess_format(&path)) else {
+            println!("Unrecognized file extension. Please specify trace format.");
+            return;
+        };
 
-    let file = File::open(&args.path).expect("Failed to open file");
-    let buf_reader = BufReader::new(file);
+        let file = File::open(&path).expect("Failed to open file");
+        let buf_reader = BufReader::new(file);
 
-    let trace = match format {
-        TraceFormat::Numpy => load_npy(buf_reader),
-        TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
-    };
+        traces.push(match format {
+            TraceFormat::Numpy => load_npy(buf_reader),
+            TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
+        });
+    }
 
-    let trace_len = trace.len();
-    let trace_min_max = [
-        trace
-            .iter()
-            .cloned()
-            .min_by(f32::total_cmp)
-            .expect("Trace has NaN sample"),
-        trace
-            .iter()
-            .cloned()
-            .max_by(f32::total_cmp)
-            .expect("Trace has NaN sample"),
-    ];
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let trace = Arc::new(trace);
+    let traces = Arc::new(traces);
 
     for _ in 0..args.gpu {
         let shared_tiling_clone = shared_tiling.clone();
-        let trace_clone = trace.clone();
+        let trace_clone = traces.clone();
         thread::spawn(move || {
             let renderer: Box<dyn Renderer> = Box::new(GpuRenderer::new());
             TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
@@ -103,7 +94,7 @@ fn main() {
 
     for _ in 0..cpu_count {
         let shared_tiling_clone = shared_tiling.clone();
-        let trace_clone = trace.clone();
+        let trace_clone = traces.clone();
         thread::spawn(move || {
             let renderer: Box<dyn Renderer> = Box::new(CpuRenderer::new());
             TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
@@ -120,20 +111,50 @@ fn main() {
         "TurboPlot",
         options,
         Box::new(|_cc| {
-            Ok(Box::new(Viewer::new(
+            Ok(Box::new(MultiViewer::new(
                 &_cc.egui_ctx,
                 shared_tiling,
-                &trace,
-                trace_len,
-                trace_min_max,
+                &traces,
             )))
         }),
     )
     .unwrap();
 }
 
-impl<'a> App for Viewer<'a> {
+struct MultiViewer<'a> {
+    viewers: Vec<Viewer<'a>>,
+}
+
+impl<'a> MultiViewer<'a> {
+    pub fn new(
+        ctx: &egui::Context,
+        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        traces: &'a [Vec<f32>],
+    ) -> Self {
+        Self {
+            viewers: traces
+                .iter()
+                .enumerate()
+                .map(|(i, t)| Viewer::new(i as u32, ctx, shared_tiling.clone(), t))
+                .collect(),
+        }
+    }
+}
+
+impl<'a> App for MultiViewer<'a> {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.ui(ctx);
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().outer_margin(0.0))
+            .show(ctx, |ui| {
+                let size = ui.available_size();
+                let h = size.y / (self.viewers.len() as f32);
+                for (i, viewer) in self.viewers.iter_mut().enumerate() {
+                    let rect = Rect::from_min_max(
+                        pos2(0.0, i as f32 * h),
+                        pos2(size.x, (i + 1) as f32 * h),
+                    );
+                    viewer.ui(ctx, ui, rect);
+                }
+            });
     }
 }
