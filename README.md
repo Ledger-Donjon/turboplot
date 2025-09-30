@@ -37,6 +37,12 @@ TurboPlot can open numpy or CSV files. When loading a CSV file, `--skip-lines` s
 turboplot --format csv --skip-lines 10 --column 2 waveform.csv
 ```
 
+Multiple traces can be opened in horizontal split-screen, with their views optionally synchronized. This can be useful for comparing two traces:
+
+```
+turboplot waveform1.npy waveform2.npy
+```
+
 By default TurboPlot will spawn 1 GPU rendering thread and the maximum CPU rendering threads the hardware can run simultaneously. To fit your needs, this can be changed by specifying the number of threads for each type of rendering backend:
 
 ```
