@@ -29,6 +29,14 @@ Alternatively, you can build and run by cloning this repository and execute:
 cargo run --release -- waveform.npy
 ```
 
+TurboPlot can open numpy or CSV files. When loading a CSV file, `--skip-lines` shall be specified to skip header lines, and --column can indicate which data column must be parsed and rendered. Column indexing starts by 0.
+
+```
+# Load CSV trace, skip first 10 lines and display third column.
+# --format is optional if the file path ends with .csv.
+turboplot --format csv --skip-lines 10 --column 2 waveform.csv
+```
+
 By default TurboPlot will spawn 1 GPU rendering thread and the maximum CPU rendering threads the hardware can run simultaneously. To fit your needs, this can be changed by specifying the number of threads for each type of rendering backend:
 
 ```
@@ -47,7 +55,7 @@ Controls:
 
 ## Limitations
 
-This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays. For the moment, only one trace can be displayed at a time.
+This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays or CSV files. For the moment, only one trace can be displayed at a time.
 
 ## License
 
