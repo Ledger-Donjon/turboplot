@@ -1,5 +1,9 @@
 # TurboPlot Changelog
 
+## [Unreleased]
+
+- Added support for CSV file format.
+
 ## [0.2.2] - 2025-09-25
 
 - Faster implementation of CPU renderer.
