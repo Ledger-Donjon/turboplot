@@ -65,6 +65,10 @@ pub struct Viewer<'a> {
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
+    /// Flag set to true when camera settings are copied from an other view.
+    /// This is a hack to disable new tile requests as we are not sure if the view has finished
+    /// moving yet. Maybe we can improve this system later...
+    camera_is_synchronizing: bool,
 }
 
 impl<'a> Viewer<'a> {
@@ -112,11 +116,23 @@ impl<'a> Viewer<'a> {
             trace_min_max,
             autoscale_request: true,
             sampling_rate: 100.0,
+            camera_is_synchronizing: false,
+        }
+    }
+
+    pub fn get_camera(&self) -> &Camera {
+        &self.camera
+    }
+
+    pub fn set_camera(&mut self, camera: Camera) {
+        if self.camera != camera {
+            self.camera = camera;
+            self.camera_is_synchronizing = true;
         }
     }
 
     /// Toolbar widgets rendering.
-    pub fn ui_toolbar(&mut self, ui: &mut Ui) {
+    pub fn ui_toolbar(&mut self, ui: &mut Ui, sync: Option<&mut bool>) {
         ui.horizontal(|ui| {
             ui.label(format!("Trace: {}S", format_number_unit(self.trace.len())));
 
@@ -191,10 +207,20 @@ impl<'a> Viewer<'a> {
                 self.tool_times.clear();
                 self.tool_step = 0;
             }
+
+            if let Some(sync) = sync {
+                ui.checkbox(sync, "Sync");
+            }
         });
     }
 
-    pub fn ui(&mut self, ctx: &egui::Context, ui: &mut Ui, viewport: Rect) {
+    pub fn ui(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut Ui,
+        viewport: Rect,
+        sync: Option<&mut bool>,
+    ) {
         egui::Window::new(format!("toolbar{}", self.id))
             .title_bar(false)
             .resizable(false)
@@ -209,7 +235,7 @@ impl<'a> Viewer<'a> {
             .min_width(viewport.width() - 32.0)
             .show(ctx, |ui| {
                 ui.set_width(viewport.width() - 32.0);
-                self.ui_toolbar(ui)
+                self.ui_toolbar(ui, sync)
             });
         self.ui_waveform(ctx, ui, viewport);
     }
@@ -372,7 +398,7 @@ impl<'a> Viewer<'a> {
                 }
                 // New tiles are requested when moving the camera has finished. While we are zooming or
                 // changing Y offset, we use previous tiles to render a preview.
-                if !zooming && !dragging_y {
+                if !zooming && !dragging_y && !self.camera_is_synchronizing {
                     // Calculate the set of tiles which must be rendered to cover all the current screen with
                     // the current camera scale and offsets.
                     let required = self.compute_viewport_tiles(response.rect * ppp);
@@ -430,6 +456,7 @@ impl<'a> Viewer<'a> {
         }
 
         self.paint_tool(ppp, &painter, &response.rect);
+        self.camera_is_synchronizing = false;
     }
 
     /// Paint the waveform as lines using egui painter. This is more suited for high zoom values

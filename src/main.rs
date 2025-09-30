@@ -123,6 +123,7 @@ fn main() {
 
 struct MultiViewer<'a> {
     viewers: Vec<Viewer<'a>>,
+    sync: bool,
 }
 
 impl<'a> MultiViewer<'a> {
@@ -137,6 +138,7 @@ impl<'a> MultiViewer<'a> {
                 .enumerate()
                 .map(|(i, t)| Viewer::new(i as u32, ctx, shared_tiling.clone(), t))
                 .collect(),
+            sync: true,
         }
     }
 }
@@ -147,13 +149,27 @@ impl<'a> App for MultiViewer<'a> {
             .frame(egui::Frame::default().outer_margin(0.0))
             .show(ctx, |ui| {
                 let size = ui.available_size();
-                let h = size.y / (self.viewers.len() as f32);
+                let n = self.viewers.len();
+                let h = size.y / n as f32;
+                let camera = *self.viewers[0].get_camera();
                 for (i, viewer) in self.viewers.iter_mut().enumerate() {
                     let rect = Rect::from_min_max(
                         pos2(0.0, i as f32 * h),
                         pos2(size.x, (i + 1) as f32 * h),
                     );
-                    viewer.ui(ctx, ui, rect);
+                    if self.sync && (i != 0) {
+                        viewer.set_camera(camera);
+                    }
+                    viewer.ui(
+                        ctx,
+                        ui,
+                        rect,
+                        if (n > 1) && (i == 0) {
+                            Some(&mut self.sync)
+                        } else {
+                            None
+                        },
+                    );
                 }
             });
     }
