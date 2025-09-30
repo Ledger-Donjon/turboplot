@@ -1,5 +1,6 @@
 use crate::{
     camera::Camera,
+    loaders::{TraceFormat, guess_format, load_csv, load_npy},
     renderer::{CpuRenderer, GpuRenderer, RENDERER_MAX_TRACE_SIZE, Renderer},
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling, TilingRenderer},
     util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
@@ -11,8 +12,6 @@ use egui::{
     Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui, Vec2, pos2,
     text::LayoutJob, vec2,
 };
-use muscat::util::read_array1_from_npy_file;
-use npyz::{DType, NpyFile};
 use std::{
     collections::HashMap,
     fs::File,
@@ -21,7 +20,9 @@ use std::{
     sync::{Arc, Condvar, Mutex},
     thread::{self, available_parallelism},
 };
+
 mod camera;
+mod loaders;
 mod renderer;
 mod tiling;
 mod util;
@@ -773,46 +774,17 @@ impl<'a> App for Viewer<'a> {
 fn main() {
     let args = Args::parse();
 
-    let file = File::open(&args.path).expect("Failed to open file");
-    let buf_reader = BufReader::new(file);
-    let npy = NpyFile::new(buf_reader).expect("Failed to parse numpy file");
-    println!("Numpy data type: {}", npy.dtype().descr());
-
-    let DType::Plain(dtype) = npy.dtype().clone() else {
-        panic!("Invalid numpy data type")
+    let Some(format) = args.format.or_else(|| guess_format(&args.path)) else {
+        println!("Unrecognized file extension. Please specify trace format.");
+        return;
     };
 
-    let trace: Vec<f32> = match (dtype.type_char(), dtype.num_bytes()) {
-        (npyz::TypeChar::Int, Some(1)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i8| x as f32)
-            .collect(),
-        (npyz::TypeChar::Int, Some(2)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i16| x as f32)
-            .collect(),
-        (npyz::TypeChar::Int, Some(4)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i32| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(1)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u8| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(2)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u16| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(4)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u32| x as f32)
-            .collect(),
-        (npyz::TypeChar::Float, Some(4)) => read_array1_from_npy_file(npy).into_iter().collect(),
-        (npyz::TypeChar::Float, Some(8)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: f64| x as f32)
-            .collect(),
-        _ => panic!("Unsupported data type"),
+    let file = File::open(&args.path).expect("Failed to open file");
+    let buf_reader = BufReader::new(file);
+
+    let trace = match format {
+        TraceFormat::Numpy => load_npy(buf_reader),
+        TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
     };
 
     let trace_len = trace.len();
@@ -912,10 +884,21 @@ enum RenderMode {
     Lines,
 }
 
+/// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
 #[derive(Parser)]
 struct Args {
     /// Data file path.
     path: String,
+    /// Trace file format. If not specified, TurboPlot will guess from file extension.
+    #[arg(long, short)]
+    format: Option<TraceFormat>,
+    /// When loading a CSV file, how many lines must be skipped before reading the values.
+    #[arg(long, default_value_t = 0)]
+    skip_lines: usize,
+    /// When loading a CSV file, this is the index of the column storing the trace values. Index
+    /// starts at zero.
+    #[arg(long, default_value_t = 0)]
+    column: usize,
     /// Number of GPU rendering threads to spawn.
     #[arg(long, short, default_value_t = 1)]
     gpu: usize,
