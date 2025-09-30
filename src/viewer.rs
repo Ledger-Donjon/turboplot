@@ -228,18 +228,19 @@ impl<'a> Viewer<'a> {
                 )
             });
 
+        let painter = ui.painter().with_clip_rect(viewport);
+        let response = ui.allocate_rect(viewport, Sense::drag());
+        // use hovered to disable interaction when cursor is on another widget (toolbar or other
+        // viewer for instance).
+        let hovered = response.hovered();
+        left_pressed &= hovered;
+
         // All egui UI can be scaled up and down, like a page in a web browser.
         // However we don't want the trace rendering to scale up, so there are some gymnastics with
         // ppp during the painting.
         let ppp = ctx.pixels_per_point();
 
-        // Hack: discard click events when over the toolbar.
-        // We must find a better way for this using egui, but for the moment this is all I have.
-        left_pressed &= pos.map(|p| p.y).unwrap_or(0.0) > 42.0 * ppp;
-
-        let response = ui.allocate_rect(viewport, Sense::drag());
-        let painter = ui.painter().with_clip_rect(viewport);
-        let zooming = scroll_delta != 0.0;
+        let zooming = (scroll_delta != 0.0) & hovered;
         if zooming {
             if modifiers.alt {
                 // Change in Y scaling
