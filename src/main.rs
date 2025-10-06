@@ -87,6 +87,7 @@ impl<'a> Viewer<'a> {
         trace: &'a Vec<f32>,
         trace_len: usize,
         trace_min_max: [f32; 2],
+        sampling_rate: f32,
     ) -> Self {
         let color_scale = ColorScale {
             power: 1.0,
@@ -111,7 +112,7 @@ impl<'a> Viewer<'a> {
             trace_len,
             trace_min_max,
             autoscale_request: true,
-            sampling_rate: 100.0,
+            sampling_rate,
         }
     }
 
@@ -852,6 +853,7 @@ fn main() {
                 &trace,
                 trace_len,
                 trace_min_max,
+                args.sampling_rate,
             )))
         }),
     )
@@ -889,6 +891,9 @@ enum RenderMode {
 struct Args {
     /// Data file path.
     path: String,
+    /// Trace sampling rate in MS/s. Default to 100MS/s
+    #[arg(long, short, default_value_t = 100.0f32)]
+    sampling_rate: f32,
     /// Trace file format. If not specified, TurboPlot will guess from file extension.
     #[arg(long, short)]
     format: Option<TraceFormat>,
