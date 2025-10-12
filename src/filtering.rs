@@ -3,9 +3,9 @@ use serde::Serialize;
 
 #[derive(clap::ValueEnum, Clone, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
-/// Digital filters supported by TurbPlot.
+/// Digital filters supported by TurboPlot.
 pub enum Filter {
-    // Low-pass filter
+    /// Low-pass filter
     LowPass,
     /// High-pass filter
     HighPass,
