@@ -45,8 +45,6 @@ pub struct Viewer<'a> {
     tool_step: u8,
     /// Time selected by the tool.
     tool_times: Vec<Fixed>,
-    /// Trace rendering color.
-    color: Color32,
     /// Defines how to calculate pixel colors depending on the density data calculated by the GPU.
     color_scale: ColorScale,
     /// Used to detect changes in color_scale so we can discard the texture cache.
@@ -108,7 +106,6 @@ impl<'a> Viewer<'a> {
             tool: Tool::Move,
             tool_step: 0,
             tool_times: Vec::new(),
-            color: Color32::WHITE,
             color_scale,
             previous_color_scale: color_scale,
             textures: HashMap::default(),
@@ -566,7 +563,7 @@ impl<'a> Viewer<'a> {
                 y1,
             ),
         };
-        painter.image(tex.into(), rect, Self::UV, self.color);
+        painter.image(tex.into(), rect, Self::UV, Color32::WHITE);
     }
 
     /// Draw a black rectangle on all the surface of the given painter.
