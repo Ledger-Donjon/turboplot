@@ -141,6 +141,20 @@ impl<'a> MultiViewer<'a> {
             sync: true,
         }
     }
+
+    /// Copy settings from viewer number `index` to others.
+    fn sync(&mut self, index: usize) {
+        let camera = *self.viewers[index].get_camera();
+        for viewer in self
+            .viewers
+            .iter_mut()
+            .enumerate()
+            .filter(|(i, _)| *i != index)
+            .map(|(_, viewer)| viewer)
+        {
+            viewer.set_camera(camera);
+        }
+    }
 }
 
 impl<'a> App for MultiViewer<'a> {
@@ -151,24 +165,82 @@ impl<'a> App for MultiViewer<'a> {
                 let size = ui.available_size();
                 let n = self.viewers.len();
                 let h = size.y / n as f32;
-                let camera = *self.viewers[0].get_camera();
-                for (i, viewer) in self.viewers.iter_mut().enumerate() {
-                    let rect = Rect::from_min_max(
-                        pos2(0.0, i as f32 * h),
-                        pos2(size.x, (i + 1) as f32 * h),
-                    );
-                    if self.sync && (i != 0) {
-                        viewer.set_camera(camera);
+
+                // Calculate the viewport for each viewer.
+                // We need viewports for both update and paint.
+                let viewports: Vec<_> = (0..self.viewers.len())
+                    .map(|i| {
+                        Rect::from_min_max(
+                            pos2(0.0, i as f32 * h),
+                            pos2(size.x, (i + 1) as f32 * h),
+                        )
+                    })
+                    .collect();
+
+                // Call update of each viewer, don't do the painting yet because we might change
+                // viewer settings afterwards for synchronization.
+                let status: Vec<_> = self
+                    .viewers
+                    .iter_mut()
+                    .zip(viewports.iter())
+                    .map(|(viewer, viewport)| viewer.update(ctx, ui, *viewport))
+                    .collect();
+
+                // If some viewer changes and synchronization is performed, we use this flag to
+                // prevent other viewers to request tiles while dragging or zooming is not finished
+                // yet.
+                let mut allow_tile_requests_for_all = true;
+
+                if self.sync {
+                    // Check if a viewer has changing camera settings
+                    if let Some((sync_index, status)) =
+                        status.iter().enumerate().find(|(_, status)| {
+                            status.dragging_x || status.dragging_y || status.zooming
+                        })
+                    {
+                        // dragging_x is not used here, it is ok to request for tiles when dragging
+                        // along X-axis. Since the scale does not change, only missing tiles on the
+                        // left or right will be requested, which is not heavy.
+                        allow_tile_requests_for_all &= !status.zooming && !status.dragging_y;
+                        // Viewer number sync_index has changed, we must copy settings to others.
+                        self.sync(sync_index);
                     }
-                    viewer.ui(
+                }
+
+                // Paint all toolbars first: if we detect that synchronization is turned on we have
+                // to perform sync before painting waveforms.
+                let mut sync_index = None;
+                for (index, (viewer, viewport)) in
+                    self.viewers.iter_mut().zip(viewports.iter()).enumerate()
+                {
+                    let prev_sync = self.sync;
+                    viewer.paint_toolbar(
+                        ctx,
+                        if n > 1 { Some(&mut self.sync) } else { None },
+                        *viewport,
+                    );
+                    if !prev_sync && self.sync {
+                        sync_index = Some(index);
+                    }
+                }
+
+                if let Some(sync_index) = sync_index {
+                    self.sync(sync_index)
+                }
+
+                // Now that all viewers have been updated and synchronized, we can paint them.
+                for ((viewer, viewport), status) in self
+                    .viewers
+                    .iter_mut()
+                    .zip(viewports.iter())
+                    .zip(status.iter())
+                {
+                    let allow_tile_requests = !status.zooming && !status.dragging_y;
+                    viewer.paint_waveform(
                         ctx,
                         ui,
-                        rect,
-                        if (n > 1) && (i == 0) {
-                            Some(&mut self.sync)
-                        } else {
-                            None
-                        },
+                        *viewport,
+                        allow_tile_requests && allow_tile_requests_for_all,
                     );
                 }
             });

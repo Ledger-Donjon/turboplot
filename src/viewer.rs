@@ -5,9 +5,8 @@ use crate::{
     util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
 };
 use egui::{
-    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Rect, Response,
-    Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui, pos2, text::LayoutJob,
-    vec2,
+    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Rect, Sense, Shape,
+    Stroke, TextFormat, TextureHandle, TextureOptions, Ui, pos2, text::LayoutJob, vec2,
 };
 use std::{
     collections::HashMap,
@@ -211,33 +210,17 @@ impl<'a> Viewer<'a> {
         });
     }
 
-    pub fn ui(
+    /// Update viewer from mouse interaction.
+    /// This is done before any painting.
+    ///
+    /// `viewport` is the allocating window region for the current viewer. This is the whole window
+    /// when only one trace is open.
+    pub fn update(
         &mut self,
         ctx: &egui::Context,
         ui: &mut Ui,
         viewport: Rect,
-        sync: Option<&mut bool>,
-    ) {
-        egui::Window::new(format!("toolbar{}", self.id))
-            .title_bar(false)
-            .resizable(false)
-            .anchor(Align2::LEFT_TOP, vec2(0.0, viewport.top()))
-            .frame(
-                egui::Frame::default()
-                    .fill(Color32::from_rgba_unmultiplied(30, 30, 30, 200))
-                    .inner_margin(8.0)
-                    .outer_margin(8.0)
-                    .corner_radius(4.0),
-            )
-            .min_width(viewport.width() - 32.0)
-            .show(ctx, |ui| {
-                ui.set_width(viewport.width() - 32.0);
-                self.ui_toolbar(ui, sync)
-            });
-        self.ui_waveform(ctx, ui, viewport);
-    }
-
-    pub fn ui_waveform(&mut self, ctx: &egui::Context, ui: &mut Ui, viewport: Rect) {
+    ) -> ViewerUpdateStatus {
         let (stable_dt, mut left_pressed, key_left, key_right, scroll_delta, pos, modifiers) = ctx
             .input(|i| {
                 (
@@ -251,8 +234,8 @@ impl<'a> Viewer<'a> {
                 )
             });
 
-        let painter = ui.painter().with_clip_rect(viewport);
         let response = ui.allocate_rect(viewport, Sense::drag());
+
         // use hovered to disable interaction when cursor is on another widget (toolbar or other
         // viewer for instance).
         let hovered = response.hovered();
@@ -290,6 +273,7 @@ impl<'a> Viewer<'a> {
         }
 
         let mut dragging_y = false;
+        let mut dragging_x = false;
         if response.dragged_by(PointerButton::Secondary)
             || (response.dragged_by(PointerButton::Primary) && self.tool == Tool::Move)
         {
@@ -302,12 +286,13 @@ impl<'a> Viewer<'a> {
             } else if response.drag_delta()[0] != 0.0 {
                 self.camera.shift.x -=
                     Fixed::from_num(response.drag_delta()[0] * ppp) * self.camera.scale.x;
+                dragging_x = true;
             }
         }
 
         let world_x =
             self.camera
-                .screen_to_world_x(&response.rect, ppp, pos.map(|p| p.x).unwrap_or(0.0));
+                .screen_to_world_x(&viewport, ppp, pos.map(|p| p.x).unwrap_or(0.0));
 
         // Tool management
         match self.tool {
@@ -366,16 +351,56 @@ impl<'a> Viewer<'a> {
         if self.autoscale_request {
             self.autoscale_request = false;
             let trace_len = Fixed::from_num(self.trace.len());
-            self.camera.scale.x = (trace_len / Fixed::from_num(response.rect.width() * ppp))
+            self.camera.scale.x = (trace_len / Fixed::from_num(viewport.width() * ppp))
                 .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
             self.camera.scale.y = Fixed::from_num(
-                ((response.rect.height() * ppp) * 0.75)
+                ((viewport.height() * ppp) * 0.75)
                     / (self.trace_min_max[1] - self.trace_min_max[0]),
             );
             self.camera.shift.y =
                 -Fixed::from_num(self.trace_min_max[0].midpoint(self.trace_min_max[1]));
         }
+
+        ViewerUpdateStatus {
+            zooming,
+            dragging_x,
+            dragging_y,
+        }
+    }
+
+    pub fn paint_toolbar(&mut self, ctx: &egui::Context, sync: Option<&mut bool>, viewport: Rect) {
+        egui::Window::new(format!("toolbar{}", self.id))
+            .title_bar(false)
+            .resizable(false)
+            .anchor(Align2::LEFT_TOP, vec2(0.0, viewport.top()))
+            .frame(
+                egui::Frame::default()
+                    .fill(Color32::from_rgba_unmultiplied(30, 30, 30, 200))
+                    .inner_margin(8.0)
+                    .outer_margin(8.0)
+                    .corner_radius(4.0),
+            )
+            .min_width(viewport.width() - 32.0)
+            .show(ctx, |ui| {
+                ui.set_width(viewport.width() - 32.0);
+                self.ui_toolbar(ui, sync)
+            });
+    }
+
+    pub fn paint_waveform(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut Ui,
+        viewport: Rect,
+        allow_tile_requests: bool,
+    ) {
+        let painter = ui.painter().with_clip_rect(viewport);
+
+        // All egui UI can be scaled up and down, like a page in a web browser.
+        // However we don't want the trace rendering to scale up, so there are some gymnastics with
+        // ppp during the painting.
+        let ppp = ctx.pixels_per_point();
 
         let mode = if self.camera.scale.x < LINES_RENDERING_SCALE_LIMIT {
             RenderMode::Lines
@@ -395,10 +420,10 @@ impl<'a> Viewer<'a> {
                 }
                 // New tiles are requested when moving the camera has finished. While we are zooming or
                 // changing Y offset, we use previous tiles to render a preview.
-                if !zooming && !dragging_y && !self.camera_is_synchronizing {
+                if allow_tile_requests {
                     // Calculate the set of tiles which must be rendered to cover all the current screen with
                     // the current camera scale and offsets.
-                    let required = self.compute_viewport_tiles(response.rect * ppp);
+                    let required = self.compute_viewport_tiles(viewport * ppp);
 
                     let mut complete = true;
                     for tile in required {
@@ -435,9 +460,9 @@ impl<'a> Viewer<'a> {
                 }
 
                 // Draw a background checkboard to show zones that are not rendered yet.
-                self.paint_checkboard(&response, &painter);
+                self.paint_checkboard(&viewport, &painter);
 
-                self.paint_tiles(ctx, ppp, &painter, response.rect);
+                self.paint_tiles(ctx, ppp, &painter, viewport);
 
                 if self.shared_tiling.0.lock().unwrap().has_pending() {
                     // TODO: it would be better to request repaint only when the GPU renderer has finished
@@ -447,12 +472,12 @@ impl<'a> Viewer<'a> {
                 }
             }
             RenderMode::Lines => {
-                self.paint_black_background(&painter, response.rect);
-                self.paint_waveform_as_lines(ppp, &painter, &response.rect);
+                self.paint_black_background(&painter, viewport);
+                self.paint_waveform_as_lines(ppp, &painter, &viewport);
             }
         }
 
-        self.paint_tool(ppp, &painter, &response.rect);
+        self.paint_tool(ppp, &painter, &viewport);
         self.camera_is_synchronizing = false;
     }
 
@@ -572,14 +597,14 @@ impl<'a> Viewer<'a> {
     }
 
     /// Draw a checkboard on all the surface of the given painter.
-    fn paint_checkboard(&self, response: &Response, painter: &Painter) {
-        let width = response.rect.width();
-        let height = response.rect.height();
+    fn paint_checkboard(&self, viewport: &Rect, painter: &Painter) {
+        let width = viewport.width();
+        let height = viewport.height();
         let nx = width / self.texture_checkboard.size()[0] as f32;
         let ny = height / self.texture_checkboard.size()[1] as f32;
         painter.image(
             (&self.texture_checkboard).into(),
-            response.rect,
+            *viewport,
             Rect::from_min_max(pos2(0.0, 0.0), pos2(nx, ny)),
             Color32::from_gray(10),
         );
@@ -794,6 +819,14 @@ impl<'a> Viewer<'a> {
             })
             .collect()
     }
+}
+
+/// Returned by [`Viewer::update`], used for synchronization between different viewers and also to
+/// allow or prevent tiles requests when camera settings are still being changed.
+pub struct ViewerUpdateStatus {
+    pub zooming: bool,
+    pub dragging_x: bool,
+    pub dragging_y: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq)]
