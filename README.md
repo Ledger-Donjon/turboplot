@@ -43,6 +43,12 @@ Multiple traces can be opened in horizontal split-screen, with their views optio
 turboplot waveform1.npy waveform2.npy
 ```
 
+Traces can be filtered with basic filters when they are loaded. Low-pass, high-pass, band-pass and notch filters are possible. This requires specifying the sampling rate (in MHz) and the cuttof frequency (in KHz).
+
+```
+cargo run --release -- -s 100 --filter low-pass --cutoff-freq 1000 waveform.npy
+```
+
 By default TurboPlot will spawn 1 GPU rendering thread and the maximum CPU rendering threads the hardware can run simultaneously. To fit your needs, this can be changed by specifying the number of threads for each type of rendering backend:
 
 ```

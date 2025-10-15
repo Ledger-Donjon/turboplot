@@ -1,9 +1,11 @@
 # TurboPlot Changelog
 
-## [Unreleased]
+## [1.0.0] - 2025-10-15
 
-- Added ability to view multiple traces.
+- Added ability to view multiple traces and synchronize the views.
+- Added ability to filter traces on opening.
 - Added support for CSV file format.
+- Upgraded egui and eframe crates versions.
 
 ## [0.2.2] - 2025-09-25
 
