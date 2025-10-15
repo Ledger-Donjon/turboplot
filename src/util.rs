@@ -35,7 +35,7 @@ impl Mul<Fixed> for FixedVec2 {
 
 pub fn generate_checkboard(ctx: &egui::Context, size: usize) -> TextureHandle {
     debug_assert!(size.is_multiple_of(2));
-    let mut image = ColorImage::new([size, size], Color32::BLACK);
+    let mut image = ColorImage::filled([size, size], Color32::BLACK);
     let half = size / 2;
     for i in 0..(size * size) {
         if (i % size < half) ^ (i % (size * size) < (half * size)) {

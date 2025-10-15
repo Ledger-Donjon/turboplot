@@ -70,7 +70,7 @@ impl Tile {
 
     pub fn generate_image(&self, color_scale: ColorScale) -> ColorImage {
         let size = self.properties.size;
-        let mut image = ColorImage::new([size.w as usize, size.h as usize], Color32::BLACK);
+        let mut image = ColorImage::filled([size.w as usize, size.h as usize], Color32::BLACK);
         let sx = 1.0 / self.properties.scale.x.to_num::<f32>();
         for x in 0..(size.w as i32) {
             for y in 0..size.h as i32 {
