@@ -1,6 +1,7 @@
 use crate::{
     camera::Camera,
     renderer::RENDERER_MAX_TRACE_SIZE,
+    sync_features::SyncFeatures,
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling},
     util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
 };
@@ -123,7 +124,7 @@ impl<'a> Viewer<'a> {
     }
 
     /// Toolbar widgets rendering.
-    pub fn ui_toolbar(&mut self, ui: &mut Ui, sync_options: Option<&mut SyncOptions>) {
+    pub fn ui_toolbar(&mut self, ui: &mut Ui, sync_options: Option<&mut SyncFeatures>) {
         ui.horizontal(|ui| {
             ui.label(format!("Trace: {}S", format_number_unit(self.trace.len())));
 
@@ -383,7 +384,7 @@ impl<'a> Viewer<'a> {
     pub fn paint_toolbar(
         &mut self,
         ctx: &egui::Context,
-        sync: Option<&mut SyncOptions>,
+        sync: Option<&mut SyncFeatures>,
         viewport: Rect,
     ) {
         egui::Window::new(format!("toolbar{}", self.id))
@@ -868,64 +869,4 @@ impl Tool {
 enum RenderMode {
     Density,
     Lines,
-}
-
-/// List of enabled synchronization features.
-#[derive(Copy, Clone)]
-pub struct SyncOptions {
-    pub shift_x: bool,
-    pub shift_y: bool,
-    pub scale_x: bool,
-    pub scale_y: bool,
-}
-
-impl SyncOptions {
-    /// Create a `SyncOptions` with all options enabled by default.
-    pub fn new() -> Self {
-        Self {
-            shift_x: true,
-            shift_y: true,
-            scale_x: true,
-            scale_y: true,
-        }
-    }
-
-    /// Returns `true` if a least one option is enabled.
-    pub fn any(&self) -> bool {
-        self.shift_x || self.shift_y || self.scale_x || self.scale_y
-    }
-
-    /// Sets all options to `true` or `false`.
-    pub fn set_all(&mut self, value: bool) {
-        self.shift_x = value;
-        self.shift_y = value;
-        self.scale_x = value;
-        self.scale_y = value;
-    }
-}
-
-impl std::ops::Not for SyncOptions {
-    type Output = Self;
-
-    fn not(self) -> Self::Output {
-        Self {
-            shift_x: !self.shift_x,
-            shift_y: !self.shift_y,
-            scale_x: !self.scale_x,
-            scale_y: !self.scale_y,
-        }
-    }
-}
-
-impl std::ops::BitAnd for SyncOptions {
-    type Output = Self;
-
-    fn bitand(self, rhs: Self) -> Self::Output {
-        Self {
-            shift_x: self.shift_x && rhs.shift_x,
-            shift_y: self.shift_y && rhs.shift_y,
-            scale_x: self.scale_x && rhs.scale_x,
-            scale_y: self.scale_y && rhs.scale_y,
-        }
-    }
 }
