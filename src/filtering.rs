@@ -16,9 +16,9 @@ pub enum Filter {
 }
 
 /// Converts CLI filters into biquad ones.
-impl Into<Type<f32>> for Filter {
-    fn into(self) -> Type<f32> {
-        match self {
+impl From<Filter> for Type<f32> {
+    fn from(value: Filter) -> Self {
+        match value {
             Filter::LowPass => Type::LowPass,
             Filter::HighPass => Type::HighPass,
             Filter::BandPass => Type::BandPass,

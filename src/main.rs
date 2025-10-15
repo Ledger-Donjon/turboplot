@@ -78,13 +78,12 @@ fn main() {
             TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
         };
 
-        match args.filter {
-            Some(filter) => trace.apply_filter(
+        if let Some(filter) = args.filter {
+            trace.apply_filter(
                 filter,
                 args.sampling_rate.mhz(),
                 args.cutoff_freq.unwrap().khz(),
-            ),
-            None => (),
+            )
         }
 
         traces.push(trace);
