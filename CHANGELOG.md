@@ -1,5 +1,10 @@
 # TurboPlot Changelog
 
+## [Unreleased]
+
+- Added ability to view multiple traces.
+- Added support for CSV file format.
+
 ## [0.2.2] - 2025-09-25
 
 - Faster implementation of CPU renderer.

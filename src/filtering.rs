@@ -1,7 +1,7 @@
 use biquad::{Biquad, Coefficients, DirectForm1, Hertz, Q_BUTTERWORTH_F32, Type};
 use serde::Serialize;
 
-#[derive(clap::ValueEnum, Clone, Debug, Serialize)]
+#[derive(clap::ValueEnum, Copy, Clone, Debug, Serialize)]
 #[serde(rename_all = "kebab-case")]
 /// Digital filters supported by TurboPlot.
 pub enum Filter {

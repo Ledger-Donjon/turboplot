@@ -91,15 +91,13 @@ impl GpuRenderer {
         }
 
         // Create the device and processing queue.
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: wgpu::Limits::downlevel_defaults(),
-                memory_hints: wgpu::MemoryHints::MemoryUsage,
-            },
-            None,
-        ))
+        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+            label: None,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::downlevel_defaults(),
+            memory_hints: wgpu::MemoryHints::MemoryUsage,
+            ..Default::default()
+        }))
         .expect("Failed to create device");
 
         let trace_buffer_size = (RENDERER_MAX_TRACE_SIZE * 4) as u64;
@@ -236,7 +234,9 @@ impl GpuRenderer {
 
     /// Wait for the GPU to finish work that has been submitted.
     fn wait(&self) {
-        self.device.poll(wgpu::Maintain::Wait);
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
     }
 
     /// Load trace data in the download input buffer.
