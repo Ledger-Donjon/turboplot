@@ -234,7 +234,9 @@ impl GpuRenderer {
 
     /// Wait for the GPU to finish work that has been submitted.
     fn wait(&self) {
-        self.device.poll(wgpu::PollType::wait_indefinitely());
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .unwrap();
     }
 
     /// Load trace data in the download input buffer.

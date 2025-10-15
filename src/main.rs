@@ -2,7 +2,7 @@ use crate::{
     loaders::{TraceFormat, guess_format, load_csv, load_npy},
     renderer::{CpuRenderer, GpuRenderer, Renderer},
     tiling::{Tiling, TilingRenderer},
-    viewer::Viewer,
+    viewer::{SyncOptions, Viewer},
 };
 use clap::Parser;
 use eframe::{App, egui};
@@ -123,7 +123,7 @@ fn main() {
 
 struct MultiViewer<'a> {
     viewers: Vec<Viewer<'a>>,
-    sync: bool,
+    sync: SyncOptions,
 }
 
 impl<'a> MultiViewer<'a> {
@@ -138,13 +138,13 @@ impl<'a> MultiViewer<'a> {
                 .enumerate()
                 .map(|(i, t)| Viewer::new(i as u32, ctx, shared_tiling.clone(), t))
                 .collect(),
-            sync: true,
+            sync: SyncOptions::new(),
         }
     }
 
     /// Copy settings from viewer number `index` to others.
     fn sync(&mut self, index: usize) {
-        let camera = *self.viewers[index].get_camera();
+        let source_camera = *self.viewers[index].get_camera();
         for viewer in self
             .viewers
             .iter_mut()
@@ -152,6 +152,19 @@ impl<'a> MultiViewer<'a> {
             .filter(|(i, _)| *i != index)
             .map(|(_, viewer)| viewer)
         {
+            let mut camera = *viewer.get_camera();
+            if self.sync.shift_x {
+                camera.shift.x = source_camera.shift.x;
+            }
+            if self.sync.shift_y {
+                camera.shift.y = source_camera.shift.y;
+            }
+            if self.sync.scale_x {
+                camera.scale.x = source_camera.scale.x;
+            }
+            if self.sync.scale_y {
+                camera.scale.y = source_camera.scale.y;
+            }
             viewer.set_camera(camera);
         }
     }
@@ -191,7 +204,7 @@ impl<'a> App for MultiViewer<'a> {
                 // yet.
                 let mut allow_tile_requests_for_all = true;
 
-                if self.sync {
+                if self.sync.any() {
                     // Check if a viewer has changing camera settings
                     if let Some((sync_index, status)) =
                         status.iter().enumerate().find(|(_, status)| {
@@ -219,7 +232,9 @@ impl<'a> App for MultiViewer<'a> {
                         if n > 1 { Some(&mut self.sync) } else { None },
                         *viewport,
                     );
-                    if !prev_sync && self.sync {
+
+                    if (!prev_sync & self.sync).any() {
+                        // One option has been enabled.
                         sync_index = Some(index);
                     }
                 }

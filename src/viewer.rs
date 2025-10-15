@@ -5,8 +5,9 @@ use crate::{
     util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
 };
 use egui::{
-    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Rect, Sense, Shape,
-    Stroke, TextFormat, TextureHandle, TextureOptions, Ui, pos2, text::LayoutJob, vec2,
+    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Popup,
+    PopupCloseBehavior, Rect, Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui,
+    pos2, text::LayoutJob, vec2,
 };
 use std::{
     collections::HashMap,
@@ -62,10 +63,6 @@ pub struct Viewer<'a> {
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
-    /// Flag set to true when camera settings are copied from an other view.
-    /// This is a hack to disable new tile requests as we are not sure if the view has finished
-    /// moving yet. Maybe we can improve this system later...
-    camera_is_synchronizing: bool,
 }
 
 impl<'a> Viewer<'a> {
@@ -112,7 +109,6 @@ impl<'a> Viewer<'a> {
             trace_min_max,
             autoscale_request: true,
             sampling_rate: 100.0,
-            camera_is_synchronizing: false,
         }
     }
 
@@ -123,12 +119,11 @@ impl<'a> Viewer<'a> {
     pub fn set_camera(&mut self, camera: Camera) {
         if self.camera != camera {
             self.camera = camera;
-            self.camera_is_synchronizing = true;
         }
     }
 
     /// Toolbar widgets rendering.
-    pub fn ui_toolbar(&mut self, ui: &mut Ui, sync: Option<&mut bool>) {
+    pub fn ui_toolbar(&mut self, ui: &mut Ui, sync_options: Option<&mut SyncOptions>) {
         ui.horizontal(|ui| {
             ui.label(format!("Trace: {}S", format_number_unit(self.trace.len())));
 
@@ -204,8 +199,24 @@ impl<'a> Viewer<'a> {
                 self.tool_step = 0;
             }
 
-            if let Some(sync) = sync {
-                ui.checkbox(sync, "Sync");
+            if let Some(options) = sync_options {
+                let response = ui.button("Sync");
+                Popup::menu(&response)
+                    .close_behavior(PopupCloseBehavior::CloseOnClickOutside)
+                    .show(|ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("All").clicked() {
+                                options.set_all(true);
+                            }
+                            if ui.button("None").clicked() {
+                                options.set_all(false);
+                            };
+                        });
+                        ui.checkbox(&mut options.shift_x, "Shift X");
+                        ui.checkbox(&mut options.shift_y, "Shift Y");
+                        ui.checkbox(&mut options.scale_x, "Scale X");
+                        ui.checkbox(&mut options.scale_y, "Scale Y");
+                    });
             }
         });
     }
@@ -369,7 +380,12 @@ impl<'a> Viewer<'a> {
         }
     }
 
-    pub fn paint_toolbar(&mut self, ctx: &egui::Context, sync: Option<&mut bool>, viewport: Rect) {
+    pub fn paint_toolbar(
+        &mut self,
+        ctx: &egui::Context,
+        sync: Option<&mut SyncOptions>,
+        viewport: Rect,
+    ) {
         egui::Window::new(format!("toolbar{}", self.id))
             .title_bar(false)
             .resizable(false)
@@ -478,7 +494,6 @@ impl<'a> Viewer<'a> {
         }
 
         self.paint_tool(ppp, &painter, &viewport);
-        self.camera_is_synchronizing = false;
     }
 
     /// Paint the waveform as lines using egui painter. This is more suited for high zoom values
@@ -853,4 +868,64 @@ impl Tool {
 enum RenderMode {
     Density,
     Lines,
+}
+
+/// List of enabled synchronization features.
+#[derive(Copy, Clone)]
+pub struct SyncOptions {
+    pub shift_x: bool,
+    pub shift_y: bool,
+    pub scale_x: bool,
+    pub scale_y: bool,
+}
+
+impl SyncOptions {
+    /// Create a `SyncOptions` with all options enabled by default.
+    pub fn new() -> Self {
+        Self {
+            shift_x: true,
+            shift_y: true,
+            scale_x: true,
+            scale_y: true,
+        }
+    }
+
+    /// Returns `true` if a least one option is enabled.
+    pub fn any(&self) -> bool {
+        self.shift_x || self.shift_y || self.scale_x || self.scale_y
+    }
+
+    /// Sets all options to `true` or `false`.
+    pub fn set_all(&mut self, value: bool) {
+        self.shift_x = value;
+        self.shift_y = value;
+        self.scale_x = value;
+        self.scale_y = value;
+    }
+}
+
+impl std::ops::Not for SyncOptions {
+    type Output = Self;
+
+    fn not(self) -> Self::Output {
+        Self {
+            shift_x: !self.shift_x,
+            shift_y: !self.shift_y,
+            scale_x: !self.scale_x,
+            scale_y: !self.scale_y,
+        }
+    }
+}
+
+impl std::ops::BitAnd for SyncOptions {
+    type Output = Self;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        Self {
+            shift_x: self.shift_x && rhs.shift_x,
+            shift_y: self.shift_y && rhs.shift_y,
+            scale_x: self.scale_x && rhs.scale_x,
+            scale_y: self.scale_y && rhs.scale_y,
+        }
+    }
 }
