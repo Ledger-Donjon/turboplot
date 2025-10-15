@@ -1,3 +1,5 @@
+[![Latest version](https://img.shields.io/crates/v/turboplot.svg)](https://crates.io/crates/turboplot)
+
 # TurboPlot
 
 TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
@@ -67,7 +69,7 @@ Controls:
 
 ## Limitations
 
-This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays or CSV files. For the moment, only one trace can be displayed at a time.
+This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays or CSV files.
 
 ## License
 
