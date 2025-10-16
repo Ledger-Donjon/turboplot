@@ -641,7 +641,7 @@ impl<'a> Viewer<'a> {
         let dt = t1 - t0;
         let x0 = self.camera.world_to_screen_x(viewport, ppp, t0);
         let x1 = self.camera.world_to_screen_x(viewport, ppp, t1);
-        let y_top = 80.5; // Base line for displaying ranges at the top.
+        let y_top = viewport.min.y + 80.5; // Base line for displaying ranges at the top.
         let y_bot = viewport.max.y - 40.0; // Base line for counter at the bottop.
         let dy = 30.0; // Distance in Y of secondary range.
 
