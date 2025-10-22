@@ -1,14 +1,8 @@
 use crate::{
-    camera::Camera,
-    renderer::RENDERER_MAX_TRACE_SIZE,
-    sync_features::SyncFeatures,
-    tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling},
-    util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
+    camera::Camera, filtering, renderer::RENDERER_MAX_TRACE_SIZE, sync_features::SyncFeatures, tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling}, util::{format_f64_unit, format_number_unit, generate_checkboard, Fixed}
 };
 use egui::{
-    Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Popup,
-    PopupCloseBehavior, Rect, Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui,
-    pos2, text::LayoutJob, vec2,
+    pos2, text::LayoutJob, vec2, Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Popup, PopupCloseBehavior, Rect, Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui
 };
 use std::{
     collections::HashMap,
@@ -67,6 +61,17 @@ pub struct Viewer<'a> {
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
+    filter: bool,
+    filter_modal_open: bool,
+    filter_band_type: filtering::Filter,
+    filter_type: filtering::Filter,
+    filter_order: u32,
+    filter_f1: f32,
+    filter_f2: f32,
+    filter_f3: f32,
+    filter_f4: f32,
+    filter_pass: f32,
+    filter_stop: f32,
 }
 
 impl<'a> Viewer<'a> {
@@ -116,6 +121,17 @@ impl<'a> Viewer<'a> {
             trace_min_max,
             autoscale_request: true,
             sampling_rate,
+            filter: false,
+            filter_modal_open: false,
+            filter_band_type: filtering::Filter::LowPass,
+            filter_type: filtering::Filter::LowPass,
+            filter_order: 1,
+            filter_f1: 0.0,
+            filter_f2: 0.0,
+            filter_f3: 0.0,
+            filter_f4: 0.0,
+            filter_pass: 0.0,
+            filter_stop: 0.0,
         }
     }
 
@@ -206,6 +222,20 @@ impl<'a> Viewer<'a> {
                 self.tool_step = 0;
             }
 
+            match self.filter {
+                true => {
+                    if ui.button("Clear filter").clicked() {
+                        self.filter = false;
+                    }
+                },
+                false => {
+                    if ui.button("Create filter").clicked() {
+                        self.filter_modal_open = true;
+                        self.filter = true;
+                    }
+                }
+            }
+
             if let Some(options) = sync_options {
                 let response = ui.button("Sync");
                 Popup::menu(&response)
@@ -261,6 +291,71 @@ impl<'a> Viewer<'a> {
                     i.modifiers,
                 )
             });
+
+        if self.filter_modal_open {
+            egui::Modal::new(egui::Id::new("Create filter")).show(ctx, |ui| {
+                ui.heading("Filter Designer");
+                ui.add_space(16.0);
+                ui.label(format!("Sampling rate:  {} MHz", self.sampling_rate));
+                ui.add_space(8.0);
+                egui::Grid::new("filter_grid")
+                .show(ui, |ui| {
+                    ui.label("Filter type:");
+                    egui::ComboBox::from_id_salt(egui::Id::new("filter_band_type")).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.filter_band_type, filtering::Filter::LowPass, "Low pass");
+                        ui.selectable_value(&mut self.filter_band_type, filtering::Filter::HighPass, "High pass");
+                        ui.selectable_value(&mut self.filter_band_type, filtering::Filter::BandPass, "Band pass");
+                        ui.selectable_value(&mut self.filter_band_type, filtering::Filter::Notch, "Notch");
+                    });
+                    egui::ComboBox::from_id_salt(egui::Id::new("filter_type")).show_ui(ui, |ui| {
+                        ui.selectable_value(&mut self.filter_type, filtering::Filter::LowPass, "Low pass");
+                        ui.selectable_value(&mut self.filter_type, filtering::Filter::HighPass, "High pass");
+                        ui.selectable_value(&mut self.filter_type, filtering::Filter::BandPass, "Band pass");
+                        ui.selectable_value(&mut self.filter_type, filtering::Filter::Notch, "Notch");
+                    });
+                    ui.end_row();
+
+                    ui.label("Order:");
+                    let drag = egui::DragValue::new(&mut self.filter_order).range(1..=100).speed(1.0);
+                    ui.add(drag);
+                    ui.end_row();
+
+                    ui.label("F1:");
+                    let drag = egui::DragValue::new(&mut self.filter_f1).range(0.0..=10000.0).speed(1.0).suffix(" MHz");
+                    ui.add(drag);
+                    ui.label("F2:");
+                    let drag = egui::DragValue::new(&mut self.filter_f2).range(0.0..=10000.0).speed(1.0).suffix(" MHz");
+                    ui.add(drag);
+                    ui.end_row();
+                    ui.label("F3:");
+                    let drag = egui::DragValue::new(&mut self.filter_f3).range(0.0..=10000.0).speed(1.0).suffix(" MHz");
+                    ui.add(drag);
+                    ui.label("F4:");
+                    let drag = egui::DragValue::new(&mut self.filter_f4).range(0.0..=10000.0).speed(1.0).suffix(" MHz");
+                    ui.add(drag);
+                    ui.end_row();
+
+                    ui.label("Pass:");
+                    let drag = egui::DragValue::new(&mut self.filter_pass).range(0.0..=100.0).speed(0.2).suffix(" dB");
+                    ui.add(drag);
+                    ui.label("Stop:");
+                    let drag = egui::DragValue::new(&mut self.filter_stop).range(0.0..=100.0).speed(0.2).suffix(" dB");
+                    ui.add(drag);
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                ui.separator();
+                ui.add_space(4.0);
+               egui::Sides::new().show(ui, |_ui| {},|ui| {
+                    if ui.button(egui::RichText::new(" Cancel ").color(Color32::RED)).clicked() {
+                        self.filter_modal_open = false;
+                    }
+                    if ui.button(egui::RichText::new(" Apply filter ").color(Color32::GREEN)).clicked() {
+                        self.filter_modal_open = false;
+                    }
+                });
+            });
+        }
 
         let response = ui.allocate_rect(viewport, Sense::drag());
 
