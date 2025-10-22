@@ -4,14 +4,14 @@ use crate::{
     renderer::RENDERER_MAX_TRACE_SIZE,
     sync_features::SyncFeatures,
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling},
-    util::{Fixed, format_f64_unit, format_number_unit, generate_checkboard},
+    util::{format_f64_unit, format_number_unit, generate_checkboard, Fixed},
 };
 use egui::{
     Align, Align2, Color32, DragValue, FontFamily, Key, Painter, PointerButton, Popup,
     PopupCloseBehavior, Rect, Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui,
     pos2, text::LayoutJob, vec2,
 };
-use sci_rs::signal::filter::design::{BesselThomsonNorm, FilterBandType, FilterType};
+use sci_rs::signal::filter::design::DigitalFilter;
 use std::{
     collections::HashMap,
     ops::Add,
@@ -69,17 +69,12 @@ pub struct Viewer<'a> {
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
-    filter: bool,
-    filter_modal_open: bool,
-    filter_band_type: FilterBandType,
-    filter_type: FilterType,
-    filter_order: u32,
-    filter_f1: f32,
-    filter_f2: f32,
-    filter_f3: f32,
-    filter_f4: f32,
-    filter_pass: f32,
-    filter_stop: f32,
+    /// Filter to apply to the trace.
+    filter: Option<DigitalFilter<f32>>,
+    /// When true, the viewer will open the filter designer modal or clear the filter.
+    filter_request: bool,
+    /// Filter designer modal.
+    filter_designer: filtering::FilterDesigner,
 }
 
 impl<'a> Viewer<'a> {
@@ -129,17 +124,9 @@ impl<'a> Viewer<'a> {
             trace_min_max,
             autoscale_request: true,
             sampling_rate,
-            filter: false,
-            filter_modal_open: false,
-            filter_band_type: FilterBandType::Lowpass,
-            filter_type: FilterType::Butterworth,
-            filter_order: 1,
-            filter_f1: 0.0,
-            filter_f2: 0.0,
-            filter_f3: 0.0,
-            filter_f4: 0.0,
-            filter_pass: 0.0,
-            filter_stop: 0.0,
+            filter: None,
+            filter_request: false,
+            filter_designer: filtering::FilterDesigner::new(),
         }
     }
 
@@ -230,18 +217,11 @@ impl<'a> Viewer<'a> {
                 self.tool_step = 0;
             }
 
-            match self.filter {
-                true => {
-                    if ui.button("Clear filter").clicked() {
-                        self.filter = false;
-                    }
-                }
-                false => {
-                    if ui.button("Create filter").clicked() {
-                        self.filter_modal_open = true;
-                        self.filter = true;
-                    }
-                }
+            if ui.button(match self.filter {
+                Some(_) => "Clear filter",
+                None => "Create filter"
+            }).clicked() {
+                self.filter_request = true;
             }
 
             if let Some(options) = sync_options {
@@ -300,139 +280,22 @@ impl<'a> Viewer<'a> {
                 )
             });
 
-        if self.filter_modal_open {
-            egui::Modal::new(egui::Id::new("Create filter")).show(ctx, |ui| {
-                ui.heading("Filter Designer");
-                ui.add_space(16.0);
-                ui.label(format!("Sampling rate:  {} MHz", self.sampling_rate));
-                ui.add_space(8.0);
-                egui::Grid::new("filter_grid").show(ui, |ui| {
-                    ui.label("Filter type:");
-                    egui::ComboBox::from_id_salt(egui::Id::new("filter_band_type"))
-                        .selected_text(filtering::filter_band_type_name(self.filter_band_type))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.filter_band_type,
-                                FilterBandType::Lowpass,
-                                "Low pass",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_band_type,
-                                FilterBandType::Highpass,
-                                "High pass",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_band_type,
-                                FilterBandType::Bandpass,
-                                "Band pass",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_band_type,
-                                FilterBandType::Bandstop,
-                                "Band stop",
-                            );
-                        });
-                    egui::ComboBox::from_id_salt(egui::Id::new("filter_type"))
-                        .selected_text(filtering::filter_type_name(self.filter_type))
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(
-                                &mut self.filter_type,
-                                FilterType::Butterworth,
-                                "Butterworth",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_type,
-                                FilterType::ChebyshevI,
-                                "Chebyshev I",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_type,
-                                FilterType::ChebyshevII,
-                                "Chebyshev II",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_type,
-                                FilterType::CauerElliptic,
-                                "Cauer Elliptic",
-                            );
-                            ui.selectable_value(
-                                &mut self.filter_type,
-                                FilterType::BesselThomson(BesselThomsonNorm::Delay),
-                                "Bessel Thomson",
-                            );
-                        });
-                    ui.end_row();
-
-                    ui.label("Order:");
-                    let drag = egui::DragValue::new(&mut self.filter_order)
-                        .range(1..=100)
-                        .speed(1.0);
-                    ui.add(drag);
-                    ui.end_row();
-
-                    ui.label("F1:");
-                    let drag = egui::DragValue::new(&mut self.filter_f1)
-                        .range(0.0..=10000.0)
-                        .speed(1.0)
-                        .suffix(" MHz");
-                    ui.add(drag);
-                    ui.label("F2:");
-                    let drag = egui::DragValue::new(&mut self.filter_f2)
-                        .range(0.0..=10000.0)
-                        .speed(1.0)
-                        .suffix(" MHz");
-                    ui.add(drag);
-                    ui.end_row();
-                    ui.label("F3:");
-                    let drag = egui::DragValue::new(&mut self.filter_f3)
-                        .range(0.0..=10000.0)
-                        .speed(1.0)
-                        .suffix(" MHz");
-                    ui.add(drag);
-                    ui.label("F4:");
-                    let drag = egui::DragValue::new(&mut self.filter_f4)
-                        .range(0.0..=10000.0)
-                        .speed(1.0)
-                        .suffix(" MHz");
-                    ui.add(drag);
-                    ui.end_row();
-
-                    ui.label("Pass:");
-                    let drag = egui::DragValue::new(&mut self.filter_pass)
-                        .range(0.0..=100.0)
-                        .speed(0.2)
-                        .suffix(" dB");
-                    ui.add(drag);
-                    ui.label("Stop:");
-                    let drag = egui::DragValue::new(&mut self.filter_stop)
-                        .range(0.0..=100.0)
-                        .speed(0.2)
-                        .suffix(" dB");
-                    ui.add(drag);
-                    ui.end_row();
-                });
-                ui.add_space(4.0);
-                ui.separator();
-                ui.add_space(4.0);
-                egui::Sides::new().show(
-                    ui,
-                    |_ui| {},
-                    |ui| {
-                        if ui
-                            .button(egui::RichText::new(" Cancel ").color(Color32::RED))
-                            .clicked()
-                        {
-                            self.filter_modal_open = false;
-                        }
-                        if ui
-                            .button(egui::RichText::new(" Apply filter ").color(Color32::GREEN))
-                            .clicked()
-                        {
-                            self.filter_modal_open = false;
-                        }
-                    },
-                );
-            });
+        if self.filter_request {
+            match self.filter {
+                Some(_) => {
+                    // TODO: restore original trace
+                    self.filter = None;
+                    self.filter_request = false;
+                }
+                None => {
+                    self.filter_designer.request_open();
+                    self.filter = self.filter_designer.design_filter(ctx, self.sampling_rate);
+                    if !self.filter_designer.is_open() {
+                        // TODO:Check and apply filter
+                        self.filter_request = false;
+                    }
+                }
+            }
         }
 
         let response = ui.allocate_rect(viewport, Sense::drag());
