@@ -1,11 +1,9 @@
 use crate::{
-    filtering::Filtering,
     loaders::{TraceFormat, guess_format, load_csv, load_npy},
     multi_viewer::MultiViewer,
     renderer::{CpuRenderer, GpuRenderer, Renderer},
     tiling::{Tiling, TilingRenderer},
 };
-use biquad::ToHertz;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
@@ -35,12 +33,6 @@ struct Args {
     /// Trace sampling rate in MS/s. Default to 100MS/s
     #[arg(long, short, default_value_t = 100.0f32)]
     sampling_rate: f32,
-    /// Specify a digital filter.
-    #[arg(long, requires("cutoff_freq"), value_enum)]
-    filter: Option<filtering::Filter>,
-    /// Cutoff frequency in kHz if a filter has been specified.
-    #[arg(long, requires("filter"))]
-    cutoff_freq: Option<f32>,
     /// Trace file format. If not specified, TurboPlot will guess from file extension.
     #[arg(long, short)]
     format: Option<TraceFormat>,
@@ -73,18 +65,10 @@ fn main() {
         let file = File::open(path).expect("Failed to open file");
         let buf_reader = BufReader::new(file);
 
-        let mut trace = match format {
+        let trace = match format {
             TraceFormat::Numpy => load_npy(buf_reader),
             TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
         };
-
-        if let Some(filter) = args.filter {
-            trace.apply_filter(
-                filter,
-                args.sampling_rate.mhz(),
-                args.cutoff_freq.unwrap().khz(),
-            )
-        }
 
         traces.push(trace);
     }

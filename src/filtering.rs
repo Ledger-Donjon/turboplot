@@ -1,46 +1,59 @@
-use biquad::{Biquad, Coefficients, DirectForm1, Hertz, Q_BUTTERWORTH_F32, Type};
-use serde::Serialize;
+use sci_rs::signal::filter::{
+    design::{BesselThomsonNorm, DigitalFilter, FilterBandType, FilterType},
+    sosfiltfilt_dyn,
+};
 
-#[derive(clap::ValueEnum, Copy, Clone, Debug, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "kebab-case")]
-/// Digital filters supported by TurboPlot.
-pub enum Filter {
-    /// Low-pass filter
-    LowPass,
-    /// High-pass filter
-    HighPass,
-    /// Band-Pass filter
-    BandPass,
-    /// Notch filter
-    Notch,
+/// Returns the display name for a given `FilterType`.
+///
+/// # Arguments
+///
+/// * `filter_type` - A `FilterType` enum variant representing the type of filter.
+///
+/// # Returns
+///
+/// * A string slice representing the name of the filter type.
+pub fn filter_type_name<'a>(filter_type: FilterType) -> &'a str {
+    match filter_type {
+        FilterType::Butterworth => "Butterworth",
+        FilterType::ChebyshevI => "Chebyshev I",
+        FilterType::ChebyshevII => "Chebyshev II",
+        FilterType::CauerElliptic => "Cauer Elliptic",
+        FilterType::BesselThomson(BesselThomsonNorm::Delay) => "Bessel Thomson",
+        FilterType::BesselThomson(BesselThomsonNorm::Phase) => "Bessel Thomson",
+        FilterType::BesselThomson(BesselThomsonNorm::Mag) => "Bessel Thomson",
+    }
 }
 
-/// Converts CLI filters into biquad ones.
-impl From<Filter> for Type<f32> {
-    fn from(value: Filter) -> Self {
-        match value {
-            Filter::LowPass => Type::LowPass,
-            Filter::HighPass => Type::HighPass,
-            Filter::BandPass => Type::BandPass,
-            Filter::Notch => Type::Notch,
-        }
+/// Returns the display name for a given `FilterBandType`.
+///
+/// # Arguments
+///
+/// * `filter_band_type` - A `FilterBandType` enum variant representing the filter band type.
+///
+/// # Returns
+///
+/// * A string slice representing the name of the filter band type.
+pub fn filter_band_type_name<'a>(filter_band_type: FilterBandType) -> &'a str {
+    match filter_band_type {
+        FilterBandType::Lowpass => "Low pass",
+        FilterBandType::Highpass => "High pass",
+        FilterBandType::Bandpass => "Band pass",
+        FilterBandType::Bandstop => "Band stop",
     }
 }
 
 /// Define an interface to apply filter on traces.
 pub trait Filtering {
-    fn apply_filter(&mut self, filter: Filter, fs: Hertz<f32>, f0: Hertz<f32>);
+    fn apply_filter(&mut self, filter: DigitalFilter<f32>);
 }
 
 /// Extends Vec<f32> to support digital filters.
 impl Filtering for Vec<f32> {
-    fn apply_filter(&mut self, filter: Filter, fs: Hertz<f32>, f0: Hertz<f32>) {
-        let coeffs =
-            Coefficients::<f32>::from_params(filter.into(), fs, f0, Q_BUTTERWORTH_F32).unwrap();
-        let mut biquad = DirectForm1::<f32>::new(coeffs);
-
-        for x in self.iter_mut() {
-            *x = biquad.run(*x);
-        }
+    fn apply_filter(&mut self, filter: DigitalFilter<f32>) {
+        let DigitalFilter::Sos(sos) = filter else {
+            panic!("Not SOS filter")
+        };
+        let filtered: Vec<f32> = sosfiltfilt_dyn(self.iter(), &sos.sos);
+        *self = filtered;
     }
 }
