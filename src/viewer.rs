@@ -13,6 +13,7 @@ use egui::{
 use std::{
     collections::HashMap,
     ops::Add,
+    path::Path,
     sync::{Arc, Condvar, Mutex},
 };
 
@@ -36,6 +37,8 @@ pub struct Viewer<'a> {
     id: u32,
     /// The trace being displayed.
     trace: &'a Vec<f32>,
+    /// The trace's path.
+    path: &'a String,
     /// Current camera settings.
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
@@ -73,6 +76,7 @@ impl<'a> Viewer<'a> {
         id: u32,
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        path: &'a String,
         trace: &'a Vec<f32>,
         sampling_rate: f32,
     ) -> Self {
@@ -99,6 +103,7 @@ impl<'a> Viewer<'a> {
         Self {
             id,
             trace,
+            path,
             camera: Camera::new(),
             shared_tiling,
             tool: Tool::Move,
@@ -220,6 +225,16 @@ impl<'a> Viewer<'a> {
                         ui.checkbox(&mut options.scale_y, "Scale Y");
                     });
             }
+
+            // Show trace's name and path
+            let filename = Path::new(self.path)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .to_string();
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+                ui.label(filename).on_hover_text(self.path.clone());
+            });
         });
     }
 

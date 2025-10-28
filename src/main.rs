@@ -64,13 +64,13 @@ fn main() {
     let args = Args::parse();
 
     let mut traces = Vec::new();
-    for path in args.paths {
-        let Some(format) = args.format.or_else(|| guess_format(&path)) else {
+    for path in &args.paths {
+        let Some(format) = args.format.or_else(|| guess_format(path)) else {
             println!("Unrecognized file extension. Please specify trace format.");
             return;
         };
 
-        let file = File::open(&path).expect("Failed to open file");
+        let file = File::open(path).expect("Failed to open file");
         let buf_reader = BufReader::new(file);
 
         let mut trace = match format {
@@ -138,6 +138,7 @@ fn main() {
             Ok(Box::new(MultiViewer::new(
                 &_cc.egui_ctx,
                 shared_tiling,
+                &args.paths,
                 &traces,
                 args.sampling_rate,
             )))

@@ -15,14 +15,25 @@ impl<'a> MultiViewer<'a> {
     pub fn new(
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
+        paths: &'a [String],
         traces: &'a [Vec<f32>],
         sampling_rate: f32,
     ) -> Self {
         Self {
-            viewers: traces
+            viewers: paths
                 .iter()
+                .zip(traces.iter())
                 .enumerate()
-                .map(|(i, t)| Viewer::new(i as u32, ctx, shared_tiling.clone(), t, sampling_rate))
+                .map(|(i, t)| {
+                    Viewer::new(
+                        i as u32,
+                        ctx,
+                        shared_tiling.clone(),
+                        t.0,
+                        t.1,
+                        sampling_rate,
+                    )
+                })
                 .collect(),
             sync: SyncFeatures::new(),
         }
