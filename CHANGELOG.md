@@ -3,6 +3,7 @@
 ## [X.X.X] - XXXX-XX-XX
 
 - Added traces' names and paths on the toolbar.
+- Revamped the filter feature.
 
 ## [1.0.0] - 2025-10-15
 
