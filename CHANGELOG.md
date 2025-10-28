@@ -1,5 +1,9 @@
 # TurboPlot Changelog
 
+## [X.X.X] - XXXX-XX-XX
+
+- Added traces' names and paths on the toolbar.
+
 ## [1.0.0] - 2025-10-15
 
 - Added ability to view multiple traces and synchronize the views.
