@@ -10,7 +10,7 @@ use egui::Vec2;
 use std::{
     fs::File,
     io::BufReader,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, RwLock},
     thread::{self, available_parallelism},
 };
 
@@ -74,14 +74,19 @@ fn main() {
     }
 
     let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let traces = Arc::new(traces);
+    let traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>> = Arc::new(
+        traces
+            .into_iter()
+            .map(|t| RwLock::new(Arc::new(t)))
+            .collect(),
+    );
 
     for _ in 0..args.gpu {
         let shared_tiling_clone = shared_tiling.clone();
         let trace_clone = traces.clone();
         thread::spawn(move || {
             let renderer: Box<dyn Renderer> = Box::new(GpuRenderer::new());
-            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
+            TilingRenderer::new(shared_tiling_clone, trace_clone, renderer).render_loop();
         });
     }
 
@@ -105,7 +110,7 @@ fn main() {
         let trace_clone = traces.clone();
         thread::spawn(move || {
             let renderer: Box<dyn Renderer> = Box::new(CpuRenderer::new());
-            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
+            TilingRenderer::new(shared_tiling_clone, trace_clone, renderer).render_loop();
         });
     }
 
@@ -123,7 +128,7 @@ fn main() {
                 &_cc.egui_ctx,
                 shared_tiling,
                 &args.paths,
-                &traces,
+                traces,
                 args.sampling_rate,
             )))
         }),

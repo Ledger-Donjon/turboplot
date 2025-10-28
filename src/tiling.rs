@@ -3,12 +3,12 @@ use crate::{
     util::{Fixed, FixedVec2},
 };
 use egui::{Color32, ColorImage, epaint::Hsva, lerp};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 /// A library of tiles and their current rendering status and result.
 ///
 /// This structure is shared between the viewer, which asks for tiles and use them, and a tile
-/// rendered which receives and fulfill rendering requests.
+/// renderer which receives and fulfill rendering requests.
 pub struct Tiling {
     pub tiles: Vec<Tile>,
 }
@@ -122,16 +122,16 @@ pub struct TileProperties {
     pub size: TileSize,
 }
 
-pub struct TilingRenderer<'a> {
+pub struct TilingRenderer {
     renderer: Box<dyn Renderer>,
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-    traces: &'a Vec<Vec<f32>>,
+    traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>>,
 }
 
-impl<'a> TilingRenderer<'a> {
+impl TilingRenderer {
     pub fn new(
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        traces: &'a Vec<Vec<f32>>,
+        traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>>,
         renderer: Box<dyn Renderer>,
     ) -> Self {
         Self {
@@ -189,8 +189,9 @@ impl<'a> TilingRenderer<'a> {
         scale: FixedVec2,
         size: TileSize,
     ) -> Vec<u32> {
-        let trace: &Vec<f32> = &self.traces[id as usize];
-        let trace_len = trace.len() as i32;
+        // Snapshot the current trace for this viewer id
+        let trace_arc = self.traces[id as usize].read().unwrap().clone();
+        let trace_len = trace_arc.len() as i32;
         let i_start = (index as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
         let i_end = ((index + 1) as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
 
@@ -198,7 +199,7 @@ impl<'a> TilingRenderer<'a> {
             return vec![0; size.area() as usize];
         }
 
-        let trace_chunk = &trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
+        let trace_chunk = &trace_arc[i_start as usize..(i_end + 1).min(trace_len) as usize];
 
         // We need at least 2 points to have one segment.
         if trace_chunk.len() < 2 {
