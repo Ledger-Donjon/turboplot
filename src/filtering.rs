@@ -2,42 +2,92 @@ use sci_rs::signal::filter::design::{
     BesselThomsonNorm, DigitalFilter, FilterBandType, FilterOutputType, FilterType, iirfilter_dyn,
 };
 
-/// Returns the display name for a given `FilterType`.
-///
-/// # Arguments
-///
-/// * `filter_type` - A `FilterType` enum variant representing the type of filter.
-///
-/// # Returns
-///
-/// * A string slice representing the name of the filter type.
-fn filter_type_name<'a>(filter_type: FilterType) -> &'a str {
-    match filter_type {
-        FilterType::Butterworth => "Butterworth",
-        FilterType::ChebyshevI => "Chebyshev I",
-        FilterType::ChebyshevII => "Chebyshev II",
-        FilterType::CauerElliptic => "Cauer Elliptic",
-        FilterType::BesselThomson(BesselThomsonNorm::Delay) => "Bessel Thomson",
-        FilterType::BesselThomson(BesselThomsonNorm::Phase) => "Bessel Thomson",
-        FilterType::BesselThomson(BesselThomsonNorm::Mag) => "Bessel Thomson",
+/// Wrapper for [`FilterType`] providing [`Clone`], [`PartialEq`] and [`std::fmt::Display`] traits for use in GUI selectors.
+struct FilterTypeWrapper(FilterType);
+
+impl PartialEq for FilterTypeWrapper {
+    /// Checks equality by comparing the inner filter type.
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (&self.0, &other.0),
+            (FilterType::Butterworth, FilterType::Butterworth)
+                | (FilterType::ChebyshevI, FilterType::ChebyshevI)
+                | (FilterType::ChebyshevII, FilterType::ChebyshevII)
+                | (FilterType::CauerElliptic, FilterType::CauerElliptic)
+                | (
+                    FilterType::BesselThomson(BesselThomsonNorm::Delay),
+                    FilterType::BesselThomson(BesselThomsonNorm::Delay)
+                )
+                | (
+                    FilterType::BesselThomson(BesselThomsonNorm::Phase),
+                    FilterType::BesselThomson(BesselThomsonNorm::Phase)
+                )
+                | (
+                    FilterType::BesselThomson(BesselThomsonNorm::Mag),
+                    FilterType::BesselThomson(BesselThomsonNorm::Mag)
+                )
+        )
     }
 }
 
-/// Returns the display name for a given `FilterBandType`.
-///
-/// # Arguments
-///
-/// * `filter_band_type` - A `FilterBandType` enum variant representing the filter band type.
-///
-/// # Returns
-///
-/// * A string slice representing the name of the filter band type.
-fn filter_band_type_name<'a>(filter_band_type: FilterBandType) -> &'a str {
-    match filter_band_type {
-        FilterBandType::Lowpass => "Low pass",
-        FilterBandType::Highpass => "High pass",
-        FilterBandType::Bandpass => "Band pass",
-        FilterBandType::Bandstop => "Band stop",
+impl std::fmt::Display for FilterTypeWrapper {
+    /// Provides a user-friendly string for each filter type variant for display in GUI selectors.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            FilterType::Butterworth => write!(f, "Butterworth"),
+            FilterType::ChebyshevI => write!(f, "Chebyshev I"),
+            FilterType::ChebyshevII => write!(f, "Chebyshev II"),
+            FilterType::CauerElliptic => write!(f, "Cauer Elliptic"),
+            FilterType::BesselThomson(BesselThomsonNorm::Delay)
+            | FilterType::BesselThomson(BesselThomsonNorm::Phase)
+            | FilterType::BesselThomson(BesselThomsonNorm::Mag) => write!(f, "Bessel Thomson"),
+        }
+    }
+}
+
+impl Clone for FilterTypeWrapper {
+    /// Clones the inner filter type.
+    fn clone(&self) -> Self {
+        let ft = match &self.0 {
+            FilterType::Butterworth => FilterType::Butterworth,
+            FilterType::ChebyshevI => FilterType::ChebyshevI,
+            FilterType::ChebyshevII => FilterType::ChebyshevII,
+            FilterType::CauerElliptic => FilterType::CauerElliptic,
+            FilterType::BesselThomson(n) => match n {
+                BesselThomsonNorm::Delay => FilterType::BesselThomson(BesselThomsonNorm::Delay),
+                BesselThomsonNorm::Phase => FilterType::BesselThomson(BesselThomsonNorm::Phase),
+                BesselThomsonNorm::Mag => FilterType::BesselThomson(BesselThomsonNorm::Mag),
+            },
+        };
+        FilterTypeWrapper(ft)
+    }
+}
+
+/// Wrapper for [`FilterBandType`] providing [`PartialEq`] and [`std::fmt::Display`] traits for use in GUI selectors.
+struct FilterBandTypeWrapper(FilterBandType);
+
+impl PartialEq for FilterBandTypeWrapper {
+    /// Checks equality by comparing the inner filter band type.
+    fn eq(&self, other: &Self) -> bool {
+        matches!(
+            (&self.0, &other.0),
+            (FilterBandType::Lowpass, FilterBandType::Lowpass)
+                | (FilterBandType::Highpass, FilterBandType::Highpass)
+                | (FilterBandType::Bandpass, FilterBandType::Bandpass)
+                | (FilterBandType::Bandstop, FilterBandType::Bandstop)
+        )
+    }
+}
+
+impl std::fmt::Display for FilterBandTypeWrapper {
+    /// Provides a user-friendly string for each filter band type variant for display in GUI selectors.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.0 {
+            FilterBandType::Lowpass => write!(f, "Low pass"),
+            FilterBandType::Highpass => write!(f, "High pass"),
+            FilterBandType::Bandpass => write!(f, "Band pass"),
+            FilterBandType::Bandstop => write!(f, "Band stop"),
+        }
     }
 }
 
@@ -47,8 +97,8 @@ fn filter_band_type_name<'a>(filter_band_type: FilterBandType) -> &'a str {
 /// including filter type, band type, order, frequency specifications, and dialog state.
 /// It also stores the last error encountered during filter design for user feedback.
 pub struct FilterDesigner {
-    filter_band_type: FilterBandType,
-    filter_type: FilterType,
+    filter_band_type: FilterBandTypeWrapper,
+    filter_type: FilterTypeWrapper,
     filter_order: u32,
     filter_f1: f32,
     filter_f2: f32,
@@ -61,8 +111,8 @@ pub struct FilterDesigner {
 impl FilterDesigner {
     pub fn new() -> Self {
         Self {
-            filter_band_type: FilterBandType::Lowpass,
-            filter_type: FilterType::Butterworth,
+            filter_band_type: FilterBandTypeWrapper(FilterBandType::Lowpass),
+            filter_type: FilterTypeWrapper(FilterType::Butterworth),
             filter_order: 4,
             filter_f1: 0.0,
             filter_f2: 0.0,
@@ -111,55 +161,55 @@ impl FilterDesigner {
             egui::Grid::new("filter_grid").show(ui, |ui| {
                 ui.label("Filter type:");
                 egui::ComboBox::from_id_salt(egui::Id::new("filter_band_type"))
-                    .selected_text(filter_band_type_name(self.filter_band_type))
+                    .selected_text(self.filter_band_type.to_string())
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.filter_band_type,
-                            FilterBandType::Lowpass,
+                            FilterBandTypeWrapper(FilterBandType::Lowpass),
                             "Low pass",
                         );
                         ui.selectable_value(
                             &mut self.filter_band_type,
-                            FilterBandType::Highpass,
+                            FilterBandTypeWrapper(FilterBandType::Highpass),
                             "High pass",
                         );
                         ui.selectable_value(
                             &mut self.filter_band_type,
-                            FilterBandType::Bandpass,
+                            FilterBandTypeWrapper(FilterBandType::Bandpass),
                             "Band pass",
                         );
                         ui.selectable_value(
                             &mut self.filter_band_type,
-                            FilterBandType::Bandstop,
+                            FilterBandTypeWrapper(FilterBandType::Bandstop),
                             "Band stop",
                         );
                     });
                 egui::ComboBox::from_id_salt(egui::Id::new("filter_type"))
-                    .selected_text(filter_type_name(self.filter_type))
+                    .selected_text(self.filter_type.to_string())
                     .show_ui(ui, |ui| {
                         ui.selectable_value(
                             &mut self.filter_type,
-                            FilterType::Butterworth,
+                            FilterTypeWrapper(FilterType::Butterworth),
                             "Butterworth",
                         );
                         ui.selectable_value(
                             &mut self.filter_type,
-                            FilterType::ChebyshevI,
+                            FilterTypeWrapper(FilterType::ChebyshevI),
                             "Chebyshev I",
                         );
                         ui.selectable_value(
                             &mut self.filter_type,
-                            FilterType::ChebyshevII,
+                            FilterTypeWrapper(FilterType::ChebyshevII),
                             "Chebyshev II",
                         );
                         ui.selectable_value(
                             &mut self.filter_type,
-                            FilterType::CauerElliptic,
+                            FilterTypeWrapper(FilterType::CauerElliptic),
                             "Cauer Elliptic",
                         );
                         ui.selectable_value(
                             &mut self.filter_type,
-                            FilterType::BesselThomson(BesselThomsonNorm::Delay),
+                            FilterTypeWrapper(FilterType::BesselThomson(BesselThomsonNorm::Delay)),
                             "Bessel Thomson",
                         );
                     });
@@ -264,7 +314,7 @@ impl FilterDesigner {
         }
 
         // Nyquist frequency verification.
-        let wn: Vec<f32> = match self.filter_band_type {
+        let wn: Vec<f32> = match &self.filter_band_type.0 {
             FilterBandType::Lowpass => {
                 if !(self.filter_f1 > 0.0 && self.filter_f1 < fs / 2.0) {
                     return Err("F1 must be in ]0, fs/2[ interval");
@@ -288,7 +338,7 @@ impl FilterDesigner {
         };
 
         // Pass and stop ripple verification depending on the filter type.
-        match self.filter_type {
+        match &self.filter_type.0 {
             FilterType::ChebyshevI => {
                 if self.filter_pass <= 0.0 {
                     return Err("Pass ripple must be > 0 dB for Chebyshev I");
@@ -313,8 +363,8 @@ impl FilterDesigner {
             wn,
             Some(self.filter_pass),
             Some(self.filter_stop),
-            Some(self.filter_band_type),
-            Some(self.filter_type),
+            Some(self.filter_band_type.0),
+            Some(self.filter_type.clone().0),
             Some(false),
             Some(FilterOutputType::Sos),
             Some(fs),
