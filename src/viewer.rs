@@ -230,7 +230,7 @@ impl<'a> Viewer<'a> {
             if ui
                 .button(match self.filter {
                     Some(_) => "Clear filter",
-                    None => "Create filter",
+                    None => "Filter",
                 })
                 .clicked()
             {

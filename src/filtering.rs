@@ -202,16 +202,6 @@ impl FilterDesigner {
                             FilterTypeWrapper(FilterType::ChebyshevII),
                             "Chebyshev II",
                         );
-                        ui.selectable_value(
-                            &mut self.filter_type,
-                            FilterTypeWrapper(FilterType::CauerElliptic),
-                            "Cauer Elliptic",
-                        );
-                        ui.selectable_value(
-                            &mut self.filter_type,
-                            FilterTypeWrapper(FilterType::BesselThomson(BesselThomsonNorm::Delay)),
-                            "Bessel Thomson",
-                        );
                     });
                 ui.end_row();
 
@@ -223,36 +213,58 @@ impl FilterDesigner {
                 );
                 ui.end_row();
 
-                ui.label("F1:");
-                ui.add(
-                    egui::DragValue::new(&mut self.filter_f1)
-                        .range(0.0..=fs / 2.0f32)
-                        .speed(1.0)
-                        .suffix(" MHz"),
-                );
-                ui.label("F2:");
-                ui.add(
-                    egui::DragValue::new(&mut self.filter_f2)
-                        .range(0.0..=fs / 2.0f32)
-                        .speed(1.0)
-                        .suffix(" MHz"),
-                );
+                match &self.filter_band_type.0 {
+                    FilterBandType::Lowpass | FilterBandType::Highpass => {
+                        ui.label("Freq:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.filter_f1)
+                                .range(0.0..=fs / 2.0f32)
+                                .speed(1.0)
+                                .suffix(" MHz"),
+                        );
+                    }
+                    FilterBandType::Bandpass | FilterBandType::Bandstop => {
+                        ui.label("Freq1:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.filter_f1)
+                                .range(0.0..=fs / 2.0f32)
+                                .speed(1.0)
+                                .suffix(" MHz"),
+                        );
+                        ui.label("Freq2:");
+                        ui.add(
+                            egui::DragValue::new(&mut self.filter_f2)
+                                .range(0.0..=fs / 2.0f32)
+                                .speed(1.0)
+                                .suffix(" MHz"),
+                        );
+                    }
+                }
                 ui.end_row();
 
-                ui.label("Pass:");
-                ui.add(
-                    egui::DragValue::new(&mut self.filter_pass)
-                        .range(0.0..=1.0)
-                        .speed(0.005)
-                        .suffix(" dB"),
-                );
-                ui.label("Stop:");
-                ui.add(
-                    egui::DragValue::new(&mut self.filter_stop)
-                        .range(0.0..=100.0)
-                        .speed(0.2)
-                        .suffix(" dB"),
-                );
+                if self.filter_type == FilterTypeWrapper(FilterType::ChebyshevI)
+                    || self.filter_type == FilterTypeWrapper(FilterType::CauerElliptic)
+                {
+                    ui.label("Pass:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.filter_pass)
+                            .range(0.0..=1.0)
+                            .speed(0.005)
+                            .suffix(" dB"),
+                    );
+                }
+
+                if self.filter_type == FilterTypeWrapper(FilterType::ChebyshevII)
+                    || self.filter_type == FilterTypeWrapper(FilterType::CauerElliptic)
+                {
+                    ui.label("Stop:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.filter_stop)
+                            .range(0.0..=100.0)
+                            .speed(0.2)
+                            .suffix(" dB"),
+                    );
+                }
                 ui.end_row();
             });
 
@@ -263,23 +275,12 @@ impl FilterDesigner {
 
             ui.add_space(4.0);
             ui.separator();
-            ui.add_space(4.0);
 
             egui::Sides::new().show(
                 ui,
                 |_ui| {},
                 |ui| {
-                    if ui
-                        .button(egui::RichText::new(" Cancel ").color(egui::Color32::RED))
-                        .clicked()
-                    {
-                        self.last_error = None;
-                        self.is_open = false;
-                    }
-                    if ui
-                        .button(egui::RichText::new(" Apply filter ").color(egui::Color32::GREEN))
-                        .clicked()
-                    {
+                    if ui.button(" Apply ").clicked() {
                         match self.build_filter(fs) {
                             Ok(f) => {
                                 self.last_error = None;
@@ -290,6 +291,10 @@ impl FilterDesigner {
                                 self.last_error = Some(msg.to_string());
                             }
                         }
+                    }
+                    if ui.button(" Cancel ").clicked() {
+                        self.last_error = None;
+                        self.is_open = false;
                     }
                 },
             );
