@@ -1,6 +1,6 @@
 use crate::{sync_features::SyncFeatures, tiling::Tiling, viewer::Viewer};
 use egui::{Rect, pos2};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, RwLock};
 
 /// Split window space to display multiple traces using multiple [`Viewer`]. When enabled,
 /// synchronizes the camera of the different viewers.
@@ -16,21 +16,20 @@ impl<'a> MultiViewer<'a> {
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
         paths: &'a [String],
-        traces: &'a [Vec<f32>],
+        traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>>,
         sampling_rate: f32,
     ) -> Self {
         Self {
             viewers: paths
                 .iter()
-                .zip(traces.iter())
                 .enumerate()
-                .map(|(i, t)| {
+                .map(|(i, p)| {
                     Viewer::new(
                         i as u32,
                         ctx,
                         shared_tiling.clone(),
-                        t.0,
-                        t.1,
+                        p,
+                        traces.clone(),
                         sampling_rate,
                     )
                 })

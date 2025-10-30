@@ -1,5 +1,6 @@
 use crate::{
     camera::Camera,
+    filtering,
     renderer::RENDERER_MAX_TRACE_SIZE,
     sync_features::SyncFeatures,
     tiling::{ColorScale, Gradient, TileProperties, TileSize, TileStatus, Tiling},
@@ -10,11 +11,12 @@ use egui::{
     PopupCloseBehavior, Rect, Sense, Shape, Stroke, TextFormat, TextureHandle, TextureOptions, Ui,
     pos2, text::LayoutJob, vec2,
 };
+use sci_rs::signal::filter::{design::DigitalFilter, sosfiltfilt_dyn};
 use std::{
     collections::HashMap,
     ops::Add,
     path::Path,
-    sync::{Arc, Condvar, Mutex},
+    sync::{Arc, Condvar, Mutex, RwLock},
 };
 
 /// Defines the width of the tiles rendered by the GPU.
@@ -35,10 +37,10 @@ pub struct Viewer<'a> {
     /// Viewer identifier used to distinguish tiles in the shared tiling in case there are multiple
     /// viewers.
     id: u32,
-    /// The trace being displayed.
-    trace: &'a Vec<f32>,
     /// The trace's path.
     path: &'a String,
+    /// All traces shared across viewers and renderers.
+    traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>>,
     /// Current camera settings.
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
@@ -63,10 +65,18 @@ pub struct Viewer<'a> {
     /// Trace min and max values.
     /// Used for autoscaling.
     trace_min_max: [f32; 2],
+    /// Original trace snapshot used to restore when clearing filter.
+    original_trace: Option<Arc<Vec<f32>>>,
     /// When true, the viewer will change scale and offset so the trace fits the screen.
     autoscale_request: bool,
     /// Trace sampling rate in MS/s
     sampling_rate: f32,
+    /// Filter used to generate the filtered trace.
+    filter: Option<DigitalFilter<f32>>,
+    /// When true, the viewer will open the filter designer modal or clear the filter.
+    filter_request: bool,
+    /// Filter designer modal.
+    filter_designer: filtering::FilterDesigner,
 }
 
 impl<'a> Viewer<'a> {
@@ -77,21 +87,9 @@ impl<'a> Viewer<'a> {
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
         path: &'a String,
-        trace: &'a Vec<f32>,
+        traces: Arc<Vec<RwLock<Arc<Vec<f32>>>>>,
         sampling_rate: f32,
     ) -> Self {
-        let trace_min_max = [
-            trace
-                .iter()
-                .cloned()
-                .min_by(f32::total_cmp)
-                .expect("Trace has NaN sample"),
-            trace
-                .iter()
-                .cloned()
-                .max_by(f32::total_cmp)
-                .expect("Trace has NaN sample"),
-        ];
         let color_scale = ColorScale {
             power: 1.0,
             opacity: 10.0,
@@ -100,10 +98,11 @@ impl<'a> Viewer<'a> {
                 end: Color32::WHITE,
             },
         };
+        let trace_min_max = Self::compute_min_max(&traces[id as usize].read().unwrap().clone());
         Self {
             id,
-            trace,
             path,
+            traces,
             camera: Camera::new(),
             shared_tiling,
             tool: Tool::Move,
@@ -114,8 +113,12 @@ impl<'a> Viewer<'a> {
             textures: HashMap::default(),
             texture_checkboard: generate_checkboard(ctx, 64),
             trace_min_max,
+            original_trace: None,
             autoscale_request: true,
             sampling_rate,
+            filter: None,
+            filter_request: false,
+            filter_designer: filtering::FilterDesigner::new(),
         }
     }
 
@@ -129,10 +132,28 @@ impl<'a> Viewer<'a> {
         }
     }
 
+    /// Compute the min and max values of a trace.
+    /// Panics if the trace has NaN samples.
+    fn compute_min_max(trace: &[f32]) -> [f32; 2] {
+        [
+            trace
+                .iter()
+                .cloned()
+                .min_by(f32::total_cmp)
+                .expect("Trace has NaN sample"),
+            trace
+                .iter()
+                .cloned()
+                .max_by(f32::total_cmp)
+                .expect("Trace has NaN sample"),
+        ]
+    }
+
     /// Toolbar widgets rendering.
     pub fn ui_toolbar(&mut self, ui: &mut Ui, sync_options: Option<&mut SyncFeatures>) {
         ui.horizontal(|ui| {
-            ui.label(format!("Trace: {}S", format_number_unit(self.trace.len())));
+            let trace_arc = self.traces[self.id as usize].read().unwrap().clone();
+            ui.label(format!("Trace: {}S", format_number_unit(trace_arc.len())));
 
             ui.label("@");
             let drag = DragValue::new(&mut self.sampling_rate)
@@ -206,6 +227,16 @@ impl<'a> Viewer<'a> {
                 self.tool_step = 0;
             }
 
+            if ui
+                .button(match self.filter {
+                    Some(_) => "Clear filter",
+                    None => "Filter",
+                })
+                .clicked()
+            {
+                self.filter_request = true;
+            }
+
             if let Some(options) = sync_options {
                 let response = ui.button("Sync");
                 Popup::menu(&response)
@@ -261,6 +292,33 @@ impl<'a> Viewer<'a> {
                     i.modifiers,
                 )
             });
+
+        // Filter request management.
+        // If the filter button has been clicked, we either:
+        // - Clear the filter and restore original trace if available (if a filter has been applied)
+        // - Open the filter designer modal to design a new filter and apply it if the user clicks OK
+        if self.filter_request {
+            match self.filter {
+                Some(_) => {
+                    // Clear filter: restore original trace if available
+                    self.clear_filter();
+                    self.filter_request = false;
+                }
+                None => {
+                    self.filter_designer.open();
+                    self.filter = self
+                        .filter_designer
+                        .ui_design_filter(ctx, self.sampling_rate);
+                    if !self.filter_designer.is_open() {
+                        // Apply filter if one has been built
+                        if self.filter.is_some() {
+                            self.apply_filter();
+                        }
+                        self.filter_request = false;
+                    }
+                }
+            }
+        }
 
         let response = ui.allocate_rect(viewport, Sense::drag());
 
@@ -378,7 +436,8 @@ impl<'a> Viewer<'a> {
 
         if self.autoscale_request {
             self.autoscale_request = false;
-            let trace_len = Fixed::from_num(self.trace.len());
+            let trace_arc = self.traces[self.id as usize].read().unwrap().clone();
+            let trace_len = Fixed::from_num(trace_arc.len());
             self.camera.scale.x = (trace_len / Fixed::from_num(viewport.width() * ppp))
                 .min(Fixed::from_num(MIN_SCALE_X));
             self.camera.shift.x = trace_len / 2;
@@ -395,6 +454,47 @@ impl<'a> Viewer<'a> {
             dragging_x,
             dragging_y,
         }
+    }
+
+    /// Apply the filter to the current trace.
+    fn apply_filter(&mut self) {
+        let Some(DigitalFilter::Sos(ref s)) = self.filter else {
+            panic!("No valid SOS filter is set.");
+        };
+        let current_trace = self.traces[self.id as usize].read().unwrap().clone();
+
+        self.original_trace = Some(current_trace.clone());
+        let filtered: Vec<f32> = sosfiltfilt_dyn(current_trace.iter(), &s.sos);
+
+        self.trace_min_max = Self::compute_min_max(&filtered);
+
+        let mut w = self.traces[self.id as usize].write().unwrap();
+        *w = Arc::new(filtered);
+        drop(w);
+
+        self.invalidate_tiles_and_textures();
+    }
+
+    /// Clear the filter and restore original trace.
+    fn clear_filter(&mut self) {
+        let original = self.original_trace.take().unwrap(); // Panic if no original trace is available.
+
+        self.trace_min_max = Self::compute_min_max(&original); // Recompute min and max values for the original trace.
+
+        let mut lock = self.traces[self.id as usize].write().unwrap();
+        *lock = original;
+        drop(lock);
+
+        self.invalidate_tiles_and_textures();
+        self.filter.take();
+    }
+
+    /// Invalidate all tiles and textures belonging to this viewer.
+    fn invalidate_tiles_and_textures(&mut self) {
+        let mut tiling = self.shared_tiling.0.lock().unwrap();
+        tiling.tiles.retain(|t| t.properties.id != self.id);
+        self.shared_tiling.1.notify_all();
+        self.textures.clear();
     }
 
     pub fn paint_toolbar(
@@ -516,26 +616,27 @@ impl<'a> Viewer<'a> {
     /// Paint the waveform as lines using egui painter. This is more suited for high zoom values
     /// and benefits from lines antialiasing.
     fn paint_waveform_as_lines(&self, ppp: f32, painter: &Painter, viewport: &Rect) {
+        let trace_arc = self.traces[self.id as usize].read().unwrap().clone();
         let t0 = self
             .camera
             .screen_to_world_x(viewport, ppp, 0.0)
             .floor()
             .to_num::<isize>()
-            .clamp(0, self.trace.len() as isize) as usize;
+            .clamp(0, trace_arc.len() as isize) as usize;
         let t1 = self
             .camera
             .screen_to_world_x(viewport, ppp, viewport.max.x)
             .ceil()
             .to_num::<isize>()
             .add(1)
-            .clamp(0, self.trace.len() as isize) as usize;
+            .clamp(0, trace_arc.len() as isize) as usize;
         let points = (t0..t1)
             .map(|t| {
                 let x = self
                     .camera
                     .world_to_screen_x(viewport, ppp, Fixed::from_num(t));
                 let y = viewport.center().y
-                    - (self.trace[t] + self.camera.shift.y.to_num::<f32>())
+                    - (trace_arc[t] + self.camera.shift.y.to_num::<f32>())
                         * self.camera.scale.y.to_num::<f32>()
                         / ppp;
                 pos2(x, y)
