@@ -155,7 +155,7 @@ impl FilterDesigner {
         modal.show(ctx, |ui| {
             ui.heading("Filter Designer");
             ui.add_space(16.0);
-            ui.label(format!("Sampling rate:  {} MHz", fs));
+            ui.label(format!("Sampling rate:  {} MS/s", fs));
             ui.add_space(8.0);
 
             egui::Grid::new("filter_grid").show(ui, |ui| {
