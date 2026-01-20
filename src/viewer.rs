@@ -282,7 +282,11 @@ impl<'a> Viewer<'a> {
                 let factor = Fixed::from_num(1.5f32.powf(-scroll_delta / 40.0));
                 let s1 = self.camera.scale.x;
                 let s2 = (s1 * factor).clamp(Fixed::from_num(0.01), Fixed::from_num(MIN_SCALE_X));
-                let k = Fixed::from_num(pos.unwrap().x - response.rect.width() / 2.0);
+
+                // Calculate distance from the ACTUAL center of the viewport, scaled by ppp
+                let center_x = response.rect.center().x;
+                let k = Fixed::from_num((pos.unwrap().x - center_x) * ppp);
+
                 self.camera.shift.x = s1 * k + self.camera.shift.x - s2 * k;
                 self.camera.scale.x = s2;
             }
