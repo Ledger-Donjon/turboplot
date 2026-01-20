@@ -2,6 +2,32 @@
 
 Thank you for your interest in contributing to TurboPlot! This guide provides basic instructions on setting up your development environment and creating a release.
 
+## Development Environment
+
+To ensure code quality and consistency, we use `pre-commit` hooks.
+You can use [pre-commit](https://pre-commit.com/#install) or it's rust equivalent [prek](https://prek.j178.dev/).
+
+1.  **Installation**:
+    ```bash
+    # Rust
+    cargo install --locked prek
+
+    # Python
+    pip install pre-commit
+    ```
+
+2.  **Hooks setup**:
+    Run the following command in the repository root:
+    ```bash
+    # Rust
+    prek install
+
+    # Python
+    pre-commit install
+    
+    ```
+    This will install the git hooks that run checks (formatting, clippy, etc.) automatically when you commit changes.
+
 ## Release Process
 
 To create a new release, follow these steps:
