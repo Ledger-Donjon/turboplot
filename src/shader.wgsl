@@ -33,7 +33,7 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     // Calculate the trace range for the current pixel column.
     let i_start = min(params.trace_samples - 1, u32(f32(params.chunk_samples) * (f32(pix_x) / f32(params.w))));
     let i_end = min(params.trace_samples - 1, u32(f32(params.chunk_samples) * (f32(pix_x + 1) / f32(params.w))));
-    
+
     let mid = f32(params.h / 2);
     let y = mid - f32(pix_y);
 
@@ -51,7 +51,7 @@ fn render(@builtin(global_invocation_id) global_id: vec3<u32>) {
     //
     // Some calculation can be kept for the next loop, leading to the following faster
     // implementation below.
-    
+
     var p0 = (input[i_start] + params.offset) * params.scale_y;
     var ca0 = (y <= p0);
     var cb0 = (y >= p0);

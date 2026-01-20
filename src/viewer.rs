@@ -20,7 +20,7 @@ use std::{
 /// Defines the width of the tiles rendered by the GPU.
 /// A smaller value will raise the number of required tiles to fill the screen, the number of GPU
 /// calls will increase and therefore the overall rendering might be slower due to this overhead.
-/// A higher value can lead to unsufficient GPU memory to store a trace slice for rendering a tile,
+/// A higher value can lead to insufficient GPU memory to store a trace slice for rendering a tile,
 /// and therefore the minimum zoom level may be very limited.
 /// The current value seems to be a good compromise.
 const TILE_WIDTH: u32 = 64;

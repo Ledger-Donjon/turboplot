@@ -65,6 +65,6 @@ jobs:
         run: |
           # Create release if it doesn't exist (ignore error if it does)
           gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --generate-notes || true
-          
+
           # Upload the asset
           gh release upload "${{ github.ref_name }}" "${{ matrix.asset_name }}" --clobber

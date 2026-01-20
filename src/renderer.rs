@@ -169,7 +169,7 @@ impl GpuRenderer {
                     },
                     count: None,
                 },
-                // Rendering parameters (trace length, chunck size...)
+                // Rendering parameters (trace length, chunk size...)
                 BindGroupLayoutEntry {
                     binding: 2,
                     visibility: ShaderStages::COMPUTE,

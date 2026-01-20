@@ -24,7 +24,7 @@ You can use [pre-commit](https://pre-commit.com/#install) or it's rust equivalen
 
     # Python
     pre-commit install
-    
+
     ```
     This will install the git hooks that run checks (formatting, clippy, etc.) automatically when you commit changes.
 
