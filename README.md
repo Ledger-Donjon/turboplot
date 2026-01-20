@@ -12,6 +12,12 @@ When the sampling rate is configured, time intervals can be measured easily. The
 
 ## Installation
 
+### Pre-built Binaries
+
+You can download the latest pre-built binaries for Linux, Windows, and macOS from the [Releases page](https://github.com/Ledger-Donjon/turboplot/releases).
+
+### From Source (cargo)
+
 Rust shall be installed on your system (see [instructions](https://www.rust-lang.org/tools/install) for installation).
 TurboPlot can be directly installed by cargo:
 
