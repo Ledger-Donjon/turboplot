@@ -95,10 +95,7 @@ impl<'a> Viewer<'a> {
         let color_scale = ColorScale {
             power: 1.0,
             opacity: 10.0,
-            gradient: Gradient::SingleColor {
-                min: 0.1,
-                end: Color32::WHITE,
-            },
+            gradient: Gradient::Rainbow,
         };
         Self {
             id,
