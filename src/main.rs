@@ -1,23 +1,18 @@
 use crate::{
     filtering::Filtering,
+    input::{Args, FileManager, FileManagerResult},
     loaders::{TraceFormat, guess_format, load_csv, load_npy},
     multi_viewer::MultiViewer,
-    renderer::{CpuRenderer, GpuRenderer, Renderer},
-    tiling::{Tiling, TilingRenderer},
 };
 use biquad::ToHertz;
 use clap::Parser;
 use eframe::egui;
 use egui::Vec2;
-use std::{
-    fs::File,
-    io::BufReader,
-    sync::{Arc, Condvar, Mutex},
-    thread::{self, available_parallelism},
-};
+use std::{fs::File, io::BufReader, sync::Arc};
 
 mod camera;
 mod filtering;
+mod input;
 mod loaders;
 mod multi_viewer;
 mod renderer;
@@ -26,104 +21,130 @@ mod tiling;
 mod util;
 mod viewer;
 
-/// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
-#[derive(Parser)]
-struct Args {
-    /// Data file paths.
-    #[arg(required = true, num_args = 1..)]
-    paths: Vec<String>,
-    /// Trace sampling rate in MS/s. Default to 100MS/s
-    #[arg(long, short, default_value_t = 100.0f32)]
-    sampling_rate: f32,
-    /// Specify a digital filter.
-    #[arg(long, requires("cutoff_freq"), value_enum)]
-    filter: Option<filtering::Filter>,
-    /// Cutoff frequency in kHz if a filter has been specified.
-    #[arg(long, requires("filter"))]
-    cutoff_freq: Option<f32>,
-    /// Trace file format. If not specified, TurboPlot will guess from file extension.
-    #[arg(long, short)]
-    format: Option<TraceFormat>,
-    /// When loading a CSV file, how many lines must be skipped before reading the values.
-    #[arg(long, default_value_t = 0)]
-    skip_lines: usize,
-    /// When loading a CSV file, this is the index of the column storing the trace values. Index
-    /// starts at zero.
-    #[arg(long, default_value_t = 0)]
-    column: usize,
-    /// Number of GPU rendering threads to spawn.
-    #[arg(long, short, default_value_t = 1)]
-    gpu: usize,
-    /// Number of CPU rendering threads to spawn. If not specified, TurboPlot will spawn as many
-    /// thread as the CPU can run simultaneously.
-    #[arg(long, short)]
-    cpu: Option<usize>,
+/// Application state: selecting files, viewing traces, or closing.
+enum AppState {
+    /// File selection state with the file manager.
+    Selection(Box<FileManager>),
+    /// Viewing state with the multi-viewer.
+    Viewing(MultiViewer),
+    /// Application is closing.
+    Closing,
+}
+
+/// Main application wrapper that handles file selection and viewing states.
+struct TurboPlotApp {
+    state: AppState,
+}
+
+impl TurboPlotApp {
+    fn new(ctx: &egui::Context, args: Args) -> Self {
+        let state = if args.paths.is_empty() {
+            // No files provided, show file manager
+            AppState::Selection(Box::new(FileManager::new(args)))
+        } else {
+            // Files were provided via command line, load and go to viewing
+            match Self::load_and_create_viewer(ctx, &args) {
+                Some(viewer) => AppState::Viewing(viewer),
+                None => {
+                    // Failed to load, show file manager
+                    AppState::Selection(Box::new(FileManager::new(args)))
+                }
+            }
+        };
+
+        Self { state }
+    }
+
+    /// Loads traces from args and creates a MultiViewer if successful.
+    fn load_and_create_viewer(ctx: &egui::Context, args: &Args) -> Option<MultiViewer> {
+        let traces = Self::load_traces(args);
+        if traces.is_empty() {
+            return None;
+        }
+
+        println!(
+            "Using {} GPU threads and {} CPU threads.",
+            args.gpu,
+            args.cpu_threads()
+        );
+
+        Some(MultiViewer::new(
+            ctx,
+            args.paths.clone(),
+            Arc::new(traces),
+            args.sampling_rate,
+            args.gpu,
+            args.cpu_threads(),
+        ))
+    }
+
+    /// Loads traces from the given args.
+    fn load_traces(args: &Args) -> Vec<Arc<Vec<f32>>> {
+        let mut traces = Vec::new();
+        for path in &args.paths {
+            let Some(format) = args.format.or_else(|| guess_format(path)) else {
+                println!("Unrecognized file extension: {}", path);
+                continue;
+            };
+
+            let file = match File::open(path) {
+                Ok(f) => f,
+                Err(e) => {
+                    println!("Failed to open file {}: {}", path, e);
+                    continue;
+                }
+            };
+            let buf_reader = BufReader::new(file);
+
+            let mut trace = match format {
+                TraceFormat::Numpy => load_npy(buf_reader),
+                TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
+            };
+
+            // Apply filter if configured
+            if let Some(filter) = args.filter {
+                trace.apply_filter(filter, args.sampling_rate.mhz(), args.cutoff_freq.khz());
+            }
+
+            traces.push(Arc::new(trace));
+        }
+        traces
+    }
+}
+
+impl eframe::App for TurboPlotApp {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        match &mut self.state {
+            AppState::Selection(file_manager) => match file_manager.update(ctx) {
+                FileManagerResult::Selected(args) => {
+                    // Load traces and transition to viewing state
+                    if let Some(viewer) = Self::load_and_create_viewer(ctx, &args) {
+                        self.state = AppState::Viewing(viewer);
+                    }
+                }
+                FileManagerResult::Cancelled => {
+                    // Transition to closing state
+                    self.state = AppState::Closing;
+                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                FileManagerResult::Pending => {}
+            },
+            AppState::Viewing(viewer) => {
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::default().outer_margin(0.0))
+                    .show(ctx, |ui| {
+                        viewer.update(ctx, ui);
+                    });
+            }
+            AppState::Closing => {
+                // Do nothing, app is closing
+            }
+        }
+    }
 }
 
 fn main() {
     let args = Args::parse();
-
-    let mut traces = Vec::new();
-    for path in &args.paths {
-        let Some(format) = args.format.or_else(|| guess_format(path)) else {
-            println!("Unrecognized file extension. Please specify trace format.");
-            return;
-        };
-
-        let file = File::open(path).expect("Failed to open file");
-        let buf_reader = BufReader::new(file);
-
-        let mut trace = match format {
-            TraceFormat::Numpy => load_npy(buf_reader),
-            TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
-        };
-
-        if let Some(filter) = args.filter {
-            trace.apply_filter(
-                filter,
-                args.sampling_rate.mhz(),
-                args.cutoff_freq.unwrap().khz(),
-            )
-        }
-
-        traces.push(trace);
-    }
-
-    let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
-    let traces = Arc::new(traces);
-
-    for _ in 0..args.gpu {
-        let shared_tiling_clone = shared_tiling.clone();
-        let trace_clone = traces.clone();
-        thread::spawn(move || {
-            let renderer: Box<dyn Renderer> = Box::new(GpuRenderer::new());
-            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
-        });
-    }
-
-    let cpu_count =
-        args.cpu.unwrap_or(
-            available_parallelism()
-                .map(|x| x.get())
-                .unwrap_or_else(|_| {
-                    println!("Warning: failed to query available parallelism.");
-                    1
-                }),
-        );
-
-    println!(
-        "Using {} GPU threads and {} CPU threads.",
-        args.gpu, cpu_count
-    );
-
-    for _ in 0..cpu_count {
-        let shared_tiling_clone = shared_tiling.clone();
-        let trace_clone = traces.clone();
-        thread::spawn(move || {
-            let renderer: Box<dyn Renderer> = Box::new(CpuRenderer::new());
-            TilingRenderer::new(shared_tiling_clone, &trace_clone, renderer).render_loop();
-        });
-    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default(),
@@ -134,15 +155,7 @@ fn main() {
     eframe::run_native(
         "TurboPlot",
         options,
-        Box::new(|_cc| {
-            Ok(Box::new(MultiViewer::new(
-                &_cc.egui_ctx,
-                shared_tiling,
-                &args.paths,
-                &traces,
-                args.sampling_rate,
-            )))
-        }),
+        Box::new(move |cc| Ok(Box::new(TurboPlotApp::new(&cc.egui_ctx, args)))),
     )
     .unwrap();
 }

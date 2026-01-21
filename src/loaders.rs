@@ -3,7 +3,7 @@ use npyz::{DType, NpyFile};
 use std::{io::BufRead, path::Path};
 
 /// Possible trace formats that TurboPlot is able to load.
-#[derive(Copy, Clone, clap::ValueEnum)]
+#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
 pub enum TraceFormat {
     Numpy,
     Csv,

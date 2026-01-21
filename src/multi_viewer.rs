@@ -1,40 +1,73 @@
-use crate::{sync_features::SyncFeatures, tiling::Tiling, viewer::Viewer};
+use crate::{
+    renderer::{CpuRenderer, GpuRenderer, Renderer},
+    sync_features::SyncFeatures,
+    tiling::{Tiling, TilingRenderer},
+    viewer::Viewer,
+};
 use egui::{Rect, pos2};
-use std::sync::{Arc, Condvar, Mutex};
+use std::{
+    sync::{Arc, Condvar, Mutex},
+    thread,
+};
 
 /// Split window space to display multiple traces using multiple [`Viewer`]. When enabled,
 /// synchronizes the camera of the different viewers.
-pub struct MultiViewer<'a> {
+pub struct MultiViewer {
     /// Displayed viewers, first at window top, last at bottom.
-    viewers: Vec<Viewer<'a>>,
+    viewers: Vec<Viewer>,
     /// Selects which camera features should be synchronized.
     sync: SyncFeatures,
 }
 
-impl<'a> MultiViewer<'a> {
+impl MultiViewer {
     pub fn new(
         ctx: &egui::Context,
-        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        paths: &'a [String],
-        traces: &'a [Vec<f32>],
+        paths: Vec<String>,
+        traces: Arc<Vec<Arc<Vec<f32>>>>,
         sampling_rate: f32,
+        gpu_threads: usize,
+        cpu_threads: usize,
     ) -> Self {
+        let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
+
+        let viewers = paths
+            .iter()
+            .zip(traces.iter())
+            .enumerate()
+            .map(|(i, (path, trace))| {
+                Viewer::new(
+                    i as u32,
+                    ctx,
+                    shared_tiling.clone(),
+                    path.clone(),
+                    trace.clone(),
+                    sampling_rate,
+                )
+            })
+            .collect();
+
+        // Spawn GPU rendering threads
+        for _ in 0..gpu_threads {
+            let shared_tiling_clone = shared_tiling.clone();
+            let traces_clone = traces.clone();
+            thread::spawn(move || {
+                let renderer: Box<dyn Renderer> = Box::new(GpuRenderer::new());
+                TilingRenderer::new(shared_tiling_clone, traces_clone, renderer).render_loop();
+            });
+        }
+
+        // Spawn CPU rendering threads
+        for _ in 0..cpu_threads {
+            let shared_tiling_clone = shared_tiling.clone();
+            let traces_clone = traces.clone();
+            thread::spawn(move || {
+                let renderer: Box<dyn Renderer> = Box::new(CpuRenderer::new());
+                TilingRenderer::new(shared_tiling_clone, traces_clone, renderer).render_loop();
+            });
+        }
+
         Self {
-            viewers: paths
-                .iter()
-                .zip(traces.iter())
-                .enumerate()
-                .map(|(i, t)| {
-                    Viewer::new(
-                        i as u32,
-                        ctx,
-                        shared_tiling.clone(),
-                        t.0,
-                        t.1,
-                        sampling_rate,
-                    )
-                })
-                .collect(),
+            viewers,
             sync: SyncFeatures::new(),
         }
     }
@@ -67,7 +100,7 @@ impl<'a> MultiViewer<'a> {
     }
 
     /// Updates and paints all the viewers.
-    fn update(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+    pub fn update(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         let size = ui.available_size();
         let n = self.viewers.len();
         let h = size.y / n as f32;
@@ -144,15 +177,5 @@ impl<'a> MultiViewer<'a> {
                 allow_tile_requests && allow_tile_requests_for_all,
             );
         }
-    }
-}
-
-impl<'a> eframe::App for MultiViewer<'a> {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::CentralPanel::default()
-            .frame(egui::Frame::default().outer_margin(0.0))
-            .show(ctx, |ui| {
-                self.update(ctx, ui);
-            });
     }
 }
