@@ -31,14 +31,14 @@ const MIN_SCALE_X: usize = (RENDERER_MAX_TRACE_SIZE - 1) / TILE_WIDTH as usize;
 /// Defines the zoom limit between antialiased lines display and density rendering.
 const LINES_RENDERING_SCALE_LIMIT: f32 = 5.0;
 
-pub struct Viewer<'a> {
+pub struct Viewer {
     /// Viewer identifier used to distinguish tiles in the shared tiling in case there are multiple
     /// viewers.
     id: u32,
     /// The trace being displayed.
-    trace: &'a Vec<f32>,
+    trace: Arc<Vec<f32>>,
     /// The trace's path.
-    path: &'a String,
+    path: String,
     /// Current camera settings.
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
@@ -69,15 +69,15 @@ pub struct Viewer<'a> {
     sampling_rate: f32,
 }
 
-impl<'a> Viewer<'a> {
+impl Viewer {
     pub const UV: Rect = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
 
     pub fn new(
         id: u32,
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        path: &'a String,
-        trace: &'a Vec<f32>,
+        path: String,
+        trace: Arc<Vec<f32>>,
         sampling_rate: f32,
     ) -> Self {
         let trace_min_max = [
@@ -224,7 +224,7 @@ impl<'a> Viewer<'a> {
             }
 
             // Show trace's name and path
-            let filename = Path::new(self.path)
+            let filename = Path::new(&self.path)
                 .file_name()
                 .unwrap()
                 .to_string_lossy()

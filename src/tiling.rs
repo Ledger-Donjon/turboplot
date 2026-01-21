@@ -122,16 +122,16 @@ pub struct TileProperties {
     pub size: TileSize,
 }
 
-pub struct TilingRenderer<'a> {
+pub struct TilingRenderer {
     renderer: Box<dyn Renderer>,
     shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-    traces: &'a Vec<Vec<f32>>,
+    traces: Arc<Vec<Arc<Vec<f32>>>>,
 }
 
-impl<'a> TilingRenderer<'a> {
+impl TilingRenderer {
     pub fn new(
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        traces: &'a Vec<Vec<f32>>,
+        traces: Arc<Vec<Arc<Vec<f32>>>>,
         renderer: Box<dyn Renderer>,
     ) -> Self {
         Self {
