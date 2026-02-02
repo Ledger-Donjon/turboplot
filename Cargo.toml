@@ -2,7 +2,7 @@
 name = "turboplot"
 description = "A blazingly fast waveform renderer made for visualizing huge traces"
 repository = "https://github.com/Ledger-Donjon/turboplot"
-version = "1.0.0"
+version = "1.1.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
