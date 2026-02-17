@@ -3,6 +3,7 @@
 use crate::filtering::Filter;
 use crate::loaders::TraceFormat;
 use clap::Parser;
+use std::collections::HashSet;
 use std::thread::available_parallelism;
 
 /// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
@@ -49,6 +50,12 @@ pub struct Args {
     /// threads as the CPU can run simultaneously.
     #[arg(long, short)]
     pub cpu: Option<usize>,
+
+    /// For Tektronix WFM FastFrame files, select which frames to load.
+    /// Format: comma-separated indices or ranges, e.g. "1-3,6,7-8,12".
+    /// If not specified, all frames are loaded.
+    #[arg(long)]
+    pub frames: Option<String>,
 }
 
 impl Args {
@@ -62,5 +69,31 @@ impl Args {
                     1
                 })
         })
+    }
+
+    /// Parses the `--frames` argument into a set of frame indices.
+    /// Returns `None` if `--frames` was not specified (meaning all frames).
+    pub fn frame_selection(&self) -> Option<HashSet<usize>> {
+        let spec = self.frames.as_ref()?;
+        let mut set = HashSet::new();
+        for part in spec.split(',') {
+            let part = part.trim();
+            if let Some((start, end)) = part.split_once('-') {
+                let start: usize = start.trim().parse().unwrap_or_else(|_| {
+                    panic!("Invalid frame range start: '{}'", start.trim())
+                });
+                let end: usize = end.trim().parse().unwrap_or_else(|_| {
+                    panic!("Invalid frame range end: '{}'", end.trim())
+                });
+                assert!(start <= end, "Invalid frame range: {}-{}", start, end);
+                set.extend(start..=end);
+            } else {
+                let idx: usize = part.parse().unwrap_or_else(|_| {
+                    panic!("Invalid frame index: '{}'", part)
+                });
+                set.insert(idx);
+            }
+        }
+        Some(set)
     }
 }

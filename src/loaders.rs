@@ -7,6 +7,7 @@ use std::{io::BufRead, path::Path};
 pub enum TraceFormat {
     Numpy,
     Csv,
+    TekWfm,
 }
 
 /// Guess trace file format from its path extension.
@@ -19,6 +20,7 @@ pub fn guess_format(path: &str) -> Option<TraceFormat> {
     {
         "npy" => Some(TraceFormat::Numpy),
         "csv" => Some(TraceFormat::Csv),
+        "wfm" => Some(TraceFormat::TekWfm),
         _ => None,
     }
 }

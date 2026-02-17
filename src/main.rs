@@ -17,6 +17,7 @@ mod loaders;
 mod multi_viewer;
 mod renderer;
 mod sync_features;
+mod tek_wfm;
 mod tiling;
 mod util;
 mod viewer;
@@ -57,7 +58,7 @@ impl TurboPlotApp {
 
     /// Loads traces from args and creates a MultiViewer if successful.
     fn load_and_create_viewer(ctx: &egui::Context, args: &Args) -> Option<MultiViewer> {
-        let traces = Self::load_traces(args);
+        let (labels, traces) = Self::load_traces(args);
         if traces.is_empty() {
             return None;
         }
@@ -70,7 +71,7 @@ impl TurboPlotApp {
 
         Some(MultiViewer::new(
             ctx,
-            args.paths.clone(),
+            labels,
             Arc::new(traces),
             args.sampling_rate,
             args.gpu,
@@ -78,8 +79,11 @@ impl TurboPlotApp {
         ))
     }
 
-    /// Loads traces from the given args.
-    fn load_traces(args: &Args) -> Vec<Arc<Vec<f32>>> {
+    /// Loads traces from the given args. Returns (labels, traces) where labels
+    /// may differ from the input paths when a single file produces multiple
+    /// traces (e.g. Tektronix WFM FastFrame files).
+    fn load_traces(args: &Args) -> (Vec<String>, Vec<Arc<Vec<f32>>>) {
+        let mut labels = Vec::new();
         let mut traces = Vec::new();
         for path in &args.paths {
             let Some(format) = args.format.or_else(|| guess_format(path)) else {
@@ -96,19 +100,51 @@ impl TurboPlotApp {
             };
             let buf_reader = BufReader::new(file);
 
-            let mut trace = match format {
-                TraceFormat::Numpy => load_npy(buf_reader),
-                TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
-            };
-
-            // Apply filter if configured
-            if let Some(filter) = args.filter {
-                trace.apply_filter(filter, args.sampling_rate.mhz(), args.cutoff_freq.khz());
+            match format {
+                TraceFormat::TekWfm => {
+                    let mut frames = tek_wfm::load_tek_wfm(buf_reader, path);
+                    let n = frames.len();
+                    let selection = args.frame_selection();
+                    for (i, mut frame) in frames.drain(..).enumerate() {
+                        if let Some(ref sel) = selection {
+                            if !sel.contains(&i) {
+                                continue;
+                            }
+                        }
+                        if let Some(filter) = args.filter {
+                            frame.apply_filter(
+                                filter,
+                                args.sampling_rate.mhz(),
+                                args.cutoff_freq.khz(),
+                            );
+                        }
+                        if n > 1 {
+                            labels.push(format!("{} [frame {}]", path, i));
+                        } else {
+                            labels.push(path.clone());
+                        }
+                        traces.push(Arc::new(frame));
+                    }
+                }
+                _ => {
+                    let mut trace = match format {
+                        TraceFormat::Numpy => load_npy(buf_reader),
+                        TraceFormat::Csv => load_csv(buf_reader, args.skip_lines, args.column),
+                        TraceFormat::TekWfm => unreachable!(),
+                    };
+                    if let Some(filter) = args.filter {
+                        trace.apply_filter(
+                            filter,
+                            args.sampling_rate.mhz(),
+                            args.cutoff_freq.khz(),
+                        );
+                    }
+                    labels.push(path.clone());
+                    traces.push(Arc::new(trace));
+                }
             }
-
-            traces.push(Arc::new(trace));
         }
-        traces
+        (labels, traces)
     }
 }
 
