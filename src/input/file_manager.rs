@@ -196,23 +196,24 @@ impl FileManager {
                     .on_hover_text("Number of header lines to skip before reading values");
                 }
 
-                // WFM-specific options (show if format is Tek WFM or Auto)
-                if matches!(self.args.format, None | Some(TraceFormat::TekWfm)) {
-                    ui.add_space(10.0);
-                    ui.label("WFM Options:");
+                // Multi-trace options (show for formats that can contain multiple traces)
+                if matches!(
+                    self.args.format,
+                    None | Some(TraceFormat::TekWfm) | Some(TraceFormat::Numpy)
+                ) {
                     ui.add_space(5.0);
 
                     ui.horizontal(|ui| {
-                        ui.label("Frames:");
+                        ui.label("Traces indices:");
                         ui.add(
                             TextEdit::singleline(&mut self.frames_text)
-                                .hint_text("all or 1-3,6,7-8,12")
+                                .hint_text("all or 0-3,6,7-8,12")
                                 .desired_width(120.0),
                         );
                     })
                     .response
                     .on_hover_text(
-                        "comma-separated indices or ranges, e.g. \"1-3,6,7-8,12\". Leave empty for all frames.",
+                        "Comma-separated indices or ranges, e.g. \"0-3,6,7-8,12\". Leave empty to load all traces.",
                     );
                 }
             });
