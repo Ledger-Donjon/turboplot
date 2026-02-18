@@ -1,7 +1,7 @@
 use crate::{
     filtering::Filtering,
     input::{Args, FileManager, FileManagerResult},
-    loaders::{TraceFormat, guess_format, load_csv, load_npy},
+    loaders::{TraceFormat, guess_format, load_csv, load_npy, load_tek_wfm},
     multi_viewer::MultiViewer,
 };
 use biquad::ToHertz;
@@ -17,7 +17,6 @@ mod loaders;
 mod multi_viewer;
 mod renderer;
 mod sync_features;
-mod tek_wfm;
 mod tiling;
 mod util;
 mod viewer;
@@ -102,7 +101,7 @@ impl TurboPlotApp {
 
             // All loaders return Vec<Vec<f32>> (one or more traces per file)
             let mut frames = match format {
-                TraceFormat::TekWfm => tek_wfm::load_tek_wfm(buf_reader, path),
+                TraceFormat::TekWfm => load_tek_wfm(buf_reader, path),
                 TraceFormat::Numpy => load_npy(buf_reader, path),
                 TraceFormat::Csv => vec![load_csv(buf_reader, args.skip_lines, args.column)],
             };

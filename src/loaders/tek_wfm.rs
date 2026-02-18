@@ -302,7 +302,7 @@ pub fn load_tek_wfm<R: Read>(mut reader: R, path: &str) -> Vec<Vec<f32>> {
     );
 
     if data_type == 5 {
-        println!("  Warning: Waveform database format. May not display as a simple trace.");
+        println!("Warning: Waveform database format. May not display as a simple trace.");
     }
 
     // ==== Read curve data for each frame ====

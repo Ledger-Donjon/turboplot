@@ -1,29 +1,6 @@
 use muscat::util::read_array1_from_npy_file;
 use npyz::{DType, NpyFile};
-use std::{io::BufRead, path::Path};
-
-/// Possible trace formats that TurboPlot is able to load.
-#[derive(Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
-pub enum TraceFormat {
-    Numpy,
-    Csv,
-    TekWfm,
-}
-
-/// Guess trace file format from its path extension.
-pub fn guess_format(path: &str) -> Option<TraceFormat> {
-    match Path::new(path)
-        .extension()?
-        .to_str()?
-        .to_lowercase()
-        .as_str()
-    {
-        "npy" => Some(TraceFormat::Numpy),
-        "csv" => Some(TraceFormat::Csv),
-        "wfm" => Some(TraceFormat::TekWfm),
-        _ => None,
-    }
-}
+use std::io::BufRead;
 
 /// Load a numpy file as one or more traces.
 ///
@@ -95,20 +72,4 @@ pub fn load_npy<R: BufRead>(reader: R, path: &str) -> Vec<Vec<f32>> {
         }
         _ => panic!("Unsupported numpy array dimension: {:?}", shape),
     }
-}
-
-/// Loads a CSV file.
-///
-/// `skip` indicates how many lines must be skipped before starting to read the values.
-/// `column` is the column number (starting from 0) containing the values.
-pub fn load_csv<R: BufRead>(reader: R, skip: usize, column: usize) -> Vec<f32> {
-    reader
-        .lines()
-        .skip(skip)
-        .map(|l| {
-            let line = l.unwrap();
-            let value = line.split(",").nth(column).unwrap();
-            value.parse::<f32>().unwrap()
-        })
-        .collect()
 }
