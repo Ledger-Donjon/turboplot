@@ -79,18 +79,20 @@ impl Args {
         for part in spec.split(',') {
             let part = part.trim();
             if let Some((start, end)) = part.split_once('-') {
-                let start: usize = start.trim().parse().unwrap_or_else(|_| {
-                    panic!("Invalid frame range start: '{}'", start.trim())
-                });
-                let end: usize = end.trim().parse().unwrap_or_else(|_| {
-                    panic!("Invalid frame range end: '{}'", end.trim())
-                });
+                let start: usize = start
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("Invalid frame range start: '{}'", start.trim()));
+                let end: usize = end
+                    .trim()
+                    .parse()
+                    .unwrap_or_else(|_| panic!("Invalid frame range end: '{}'", end.trim()));
                 assert!(start <= end, "Invalid frame range: {}-{}", start, end);
                 set.extend(start..=end);
             } else {
-                let idx: usize = part.parse().unwrap_or_else(|_| {
-                    panic!("Invalid frame index: '{}'", part)
-                });
+                let idx: usize = part
+                    .parse()
+                    .unwrap_or_else(|_| panic!("Invalid frame index: '{}'", part));
                 set.insert(idx);
             }
         }

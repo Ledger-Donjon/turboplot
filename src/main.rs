@@ -109,17 +109,13 @@ impl TurboPlotApp {
             let n = frames.len();
             let selection = args.frame_selection();
             for (i, mut frame) in frames.drain(..).enumerate() {
-                if let Some(ref sel) = selection {
-                    if !sel.contains(&i) {
-                        continue;
-                    }
+                if let Some(ref sel) = selection
+                    && !sel.contains(&i)
+                {
+                    continue;
                 }
                 if let Some(filter) = args.filter {
-                    frame.apply_filter(
-                        filter,
-                        args.sampling_rate.mhz(),
-                        args.cutoff_freq.khz(),
-                    );
+                    frame.apply_filter(filter, args.sampling_rate.mhz(), args.cutoff_freq.khz());
                 }
                 if n > 1 {
                     labels.push(format!("{} [frame {}]", path, i));

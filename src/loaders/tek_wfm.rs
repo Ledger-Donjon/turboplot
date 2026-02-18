@@ -185,7 +185,10 @@ pub fn load_tek_wfm<R: Read>(mut reader: R, path: &str) -> Vec<Vec<f32>> {
     reader
         .read_to_end(&mut data)
         .expect("Failed to read WFM file");
-    assert!(data.len() >= 78, "WFM file too small for static file header");
+    assert!(
+        data.len() >= 78,
+        "WFM file too small for static file header"
+    );
 
     let mut p = WfmParser::new(data);
 
@@ -338,11 +341,24 @@ pub fn load_tek_wfm<R: Read>(mut reader: R, path: &str) -> Vec<Vec<f32>> {
         all_frames.push(samples);
     }
 
-    let sampling_rate = if imp_dim1_scale > 0.0 { 1.0 / imp_dim1_scale } else { f64::NAN };
-    let pts = if let Some(first) = all_frames.first() { first.len() } else { 0 };
+    let sampling_rate = if imp_dim1_scale > 0.0 {
+        1.0 / imp_dim1_scale
+    } else {
+        f64::NAN
+    };
+    let pts = if let Some(first) = all_frames.first() {
+        first.len()
+    } else {
+        0
+    };
     println!(
         "{}: Tektronix WFM {:?}, {:?}, {:.3} MS/s, {} frame(s), {} pts/frame",
-        path, version, format, sampling_rate / 1e6, total_frames, pts
+        path,
+        version,
+        format,
+        sampling_rate / 1e6,
+        total_frames,
+        pts
     );
 
     all_frames

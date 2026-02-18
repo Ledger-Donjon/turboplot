@@ -50,12 +50,7 @@ pub fn load_npy<R: BufRead>(reader: R, path: &str) -> Vec<Vec<f32>> {
 
     match shape.len() {
         1 => {
-            println!(
-                "{}: NumPy {}, {} pts",
-                path,
-                dtype_descr,
-                flat.len()
-            );
+            println!("{}: NumPy {}, {} pts", path, dtype_descr, flat.len());
             vec![flat]
         }
         2 => {
@@ -63,10 +58,7 @@ pub fn load_npy<R: BufRead>(reader: R, path: &str) -> Vec<Vec<f32>> {
             let pts = shape[1] as usize;
             println!(
                 "{}: NumPy {}, {} trace(s), {} pts/trace",
-                path,
-                dtype_descr,
-                n_traces,
-                pts
+                path, dtype_descr, n_traces, pts
             );
             flat.chunks_exact(pts).map(|c| c.to_vec()).collect()
         }
