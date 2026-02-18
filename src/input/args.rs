@@ -51,7 +51,7 @@ pub struct Args {
     #[arg(long, short)]
     pub cpu: Option<usize>,
 
-    /// For Tektronix WFM FastFrame files, select which frames to load.
+    /// For files that contain multiple traces, select which traces to load.
     /// Format: comma-separated indices or ranges, e.g. "1-3,6,7-8,12".
     /// If not specified, all frames are loaded.
     #[arg(long)]
