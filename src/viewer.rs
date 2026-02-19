@@ -37,8 +37,8 @@ pub struct Viewer {
     id: u32,
     /// The trace being displayed.
     trace: Arc<Vec<f32>>,
-    /// The trace's path.
-    path: String,
+    /// Display label for this trace (e.g. "file.wfm" or "file.wfm [frame 3]").
+    label: String,
     /// Current camera settings.
     camera: Camera,
     /// Rendering tiles shared between the user interface and the GPU tiles renderer.
@@ -76,7 +76,7 @@ impl Viewer {
         id: u32,
         ctx: &egui::Context,
         shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        path: String,
+        label: String,
         trace: Arc<Vec<f32>>,
         sampling_rate: f32,
     ) -> Self {
@@ -100,7 +100,7 @@ impl Viewer {
         Self {
             id,
             trace,
-            path,
+            label,
             camera: Camera::new(),
             shared_tiling,
             tool: Tool::Move,
@@ -223,14 +223,15 @@ impl Viewer {
                     });
             }
 
-            // Show trace's name and path
-            let filename = Path::new(&self.path)
+            // Extract short name from label for toolbar; full label shown on hover.
+            // Label may be a plain path or "path [frame N]" for multi-frame files.
+            let filename = Path::new(&self.label)
                 .file_name()
                 .unwrap()
                 .to_string_lossy()
                 .to_string();
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                ui.label(filename).on_hover_text(self.path.clone());
+                ui.label(filename).on_hover_text(self.label.clone());
             });
         });
     }
