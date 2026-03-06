@@ -22,7 +22,7 @@ pub struct MultiViewer {
 impl MultiViewer {
     pub fn new(
         ctx: &egui::Context,
-        paths: Vec<String>,
+        labels: Vec<String>,
         traces: Arc<Vec<Arc<Vec<f32>>>>,
         sampling_rate: f32,
         gpu_threads: usize,
@@ -30,16 +30,16 @@ impl MultiViewer {
     ) -> Self {
         let shared_tiling = Arc::new((Mutex::new(Tiling::new()), Condvar::new()));
 
-        let viewers = paths
+        let viewers = labels
             .iter()
             .zip(traces.iter())
             .enumerate()
-            .map(|(i, (path, trace))| {
+            .map(|(i, (label, trace))| {
                 Viewer::new(
                     i as u32,
                     ctx,
                     shared_tiling.clone(),
-                    path.clone(),
+                    label.clone(),
                     trace.clone(),
                     sampling_rate,
                 )

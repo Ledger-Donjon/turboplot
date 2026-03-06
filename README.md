@@ -37,13 +37,31 @@ Alternatively, you can build and run by cloning this repository and execute:
 cargo run --release -- waveform.npy
 ```
 
-TurboPlot can open numpy or CSV files. When loading a CSV file, `--skip-lines` shall be specified to skip header lines, and --column can indicate which data column must be parsed and rendered. Column indexing starts by 0.
+### Supported formats
+
+- **NumPy** (`.npy`): 1D arrays (single trace) and 2D arrays (one trace per row).
+- **Tektronix WFM** (`.wfm`): versions 1, 2 and 3, including FastFrame files (one trace per frame).
+- **CSV** (`.csv`): single-column or multi-column files.
+
+The format is guessed from the file extension. It can be forced with `--format`.
+
+When loading a CSV file, `--skip-lines` shall be specified to skip header lines, and `--column` can indicate which data column must be parsed and rendered. Column indexing starts at 0.
 
 ```
-# Load CSV trace, skip first 10 lines and display third column.
-# --format is optional if the file path ends with .csv.
 turboplot --format csv --skip-lines 10 --column 2 waveform.csv
 ```
+
+### Multi-trace files and frame selection
+
+Files that contain multiple traces (2D NumPy arrays, FastFrame WFM files) load all traces by default. You can select a subset with `--frames`:
+
+```
+turboplot --frames 0-3,7,10-12 capture.wfm
+```
+
+The format accepts comma-separated indices and ranges (e.g. `1-3,6,7-8,12`).
+
+### Split-screen
 
 Multiple traces can be opened in horizontal split-screen, with their views optionally synchronized. This can be useful for comparing two traces:
 
@@ -51,7 +69,9 @@ Multiple traces can be opened in horizontal split-screen, with their views optio
 turboplot waveform1.npy waveform2.npy
 ```
 
-Traces can be filtered with basic filters when they are loaded. Low-pass, high-pass, band-pass and notch filters are possible. This requires specifying the sampling rate (in MHz) and the cuttof frequency (in KHz).
+### Filtering
+
+Traces can be filtered with basic filters when they are loaded. Low-pass, high-pass, band-pass and notch filters are possible. This requires specifying the sampling rate (in MHz) and the cutoff frequency (in kHz).
 
 ```
 cargo run --release -- -s 100 --filter low-pass --cutoff-freq 1000 waveform.npy
@@ -72,10 +92,6 @@ Controls:
 - Horizontal zoom is performed using mouse wheel.
 - Vertical zoom is performed using Alt + mouse wheel.
 - UI can be scaled up using Ctrl + =.
-
-## Limitations
-
-This tool is experimental and still in development. TurboPlot can only open numpy files (.npy) with 1D arrays or CSV files.
 
 ## License
 

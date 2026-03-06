@@ -1,5 +1,10 @@
 # TurboPlot Changelog
 
+## [X.X.X] - XXXX-XX-XX
+
+- Added support for Tektronix WFM files
+- Added support for 2D Numpy arrays
+
 ## [1.1.0] - 2026-02-02
 
 - Added traces' names and paths on the toolbar.
