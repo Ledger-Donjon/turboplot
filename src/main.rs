@@ -1,178 +1,78 @@
-use crate::{
-    filtering::Filtering,
-    input::{Args, FileManager, FileManagerResult},
-    loaders::{TraceFormat, guess_format, load_csv, load_npy, load_tek_wfm},
-    multi_viewer::MultiViewer,
-};
-use biquad::ToHertz;
-use clap::Parser;
-use eframe::egui;
-use egui::Vec2;
-use std::{fs::File, io::BufReader, sync::Arc};
-
-mod camera;
-mod filtering;
-mod input;
-mod loaders;
-mod multi_viewer;
-mod renderer;
-mod sync_features;
-mod tiling;
-mod util;
-mod viewer;
-
-/// Application state: selecting files, viewing traces, or closing.
-enum AppState {
-    /// File selection state with the file manager.
-    Selection(Box<FileManager>),
-    /// Viewing state with the multi-viewer.
-    Viewing(MultiViewer),
-    /// Application is closing.
-    Closing,
-}
-
-/// Main application wrapper that handles file selection and viewing states.
-struct TurboPlotApp {
-    state: AppState,
-}
-
-impl TurboPlotApp {
-    fn new(ctx: &egui::Context, args: Args) -> Self {
-        let state = if args.paths.is_empty() {
-            // No files provided, show file manager
-            AppState::Selection(Box::new(FileManager::new(args)))
-        } else {
-            // Files were provided via command line, load and go to viewing
-            match Self::load_and_create_viewer(ctx, &args) {
-                Some(viewer) => AppState::Viewing(viewer),
-                None => {
-                    // Failed to load, show file manager
-                    AppState::Selection(Box::new(FileManager::new(args)))
-                }
-            }
-        };
-
-        Self { state }
-    }
-
-    /// Loads traces from args and creates a MultiViewer if successful.
-    fn load_and_create_viewer(ctx: &egui::Context, args: &Args) -> Option<MultiViewer> {
-        let (labels, traces) = Self::load_traces(args);
-        if traces.is_empty() {
-            return None;
-        }
-
-        println!(
-            "Using {} GPU threads and {} CPU threads.",
-            args.gpu,
-            args.cpu_threads()
-        );
-
-        Some(MultiViewer::new(
-            ctx,
-            labels,
-            Arc::new(traces),
-            args.sampling_rate,
-            args.gpu,
-            args.cpu_threads(),
-        ))
-    }
-
-    /// Loads traces from the given args. Returns (labels, traces) where labels
-    /// may differ from the input paths when a single file produces multiple
-    /// traces we call frames (e.g. multi-frame WFM or 2D numpy files).
-    fn load_traces(args: &Args) -> (Vec<String>, Vec<Arc<Vec<f32>>>) {
-        let mut labels = Vec::new();
-        let mut traces = Vec::new();
-        for path in &args.paths {
-            let Some(format) = args.format.or_else(|| guess_format(path)) else {
-                println!("Unrecognized file extension: {}", path);
-                continue;
-            };
-
-            let file = match File::open(path) {
-                Ok(f) => f,
-                Err(e) => {
-                    println!("Failed to open file {}: {}", path, e);
-                    continue;
-                }
-            };
-            let buf_reader = BufReader::new(file);
-
-            // All loaders return Vec<Vec<f32>> (one or more traces per file)
-            let mut frames = match format {
-                TraceFormat::TekWfm => load_tek_wfm(buf_reader, path),
-                TraceFormat::Numpy => load_npy(buf_reader, path),
-                TraceFormat::Csv => vec![load_csv(buf_reader, args.skip_lines, args.column)],
-            };
-
-            let n = frames.len();
-            let selection = args.frame_selection();
-            for (i, mut frame) in frames.drain(..).enumerate() {
-                if let Some(ref sel) = selection
-                    && !sel.contains(&i)
-                {
-                    continue;
-                }
-                if let Some(filter) = args.filter {
-                    frame.apply_filter(filter, args.sampling_rate.mhz(), args.cutoff_freq.khz());
-                }
-                if n > 1 {
-                    labels.push(format!("{} [frame {}]", path, i));
-                } else {
-                    labels.push(path.clone());
-                }
-                traces.push(Arc::new(frame));
-            }
-        }
-        (labels, traces)
-    }
-}
-
-impl eframe::App for TurboPlotApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        match &mut self.state {
-            AppState::Selection(file_manager) => match file_manager.update(ctx) {
-                FileManagerResult::Selected(args) => {
-                    // Load traces and transition to viewing state
-                    if let Some(viewer) = Self::load_and_create_viewer(ctx, &args) {
-                        self.state = AppState::Viewing(viewer);
-                    }
-                }
-                FileManagerResult::Cancelled => {
-                    // Transition to closing state
-                    self.state = AppState::Closing;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                FileManagerResult::Pending => {}
-            },
-            AppState::Viewing(viewer) => {
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::default().outer_margin(0.0))
-                    .show(ctx, |ui| {
-                        viewer.update(ctx, ui);
-                    });
-            }
-            AppState::Closing => {
-                // Do nothing, app is closing
-            }
-        }
-    }
-}
-
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
-    let args = Args::parse();
+    use clap::Parser;
+    use turboplot_lib::filtering::Filter;
+    use turboplot_lib::input::Args;
+    use turboplot_lib::loaders::TraceFormat;
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default(),
-        window_builder: Some(Box::new(|w| w.with_inner_size(Vec2::new(1280.0, 512.0)))),
-        ..Default::default()
-    };
+    /// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
+    #[derive(Parser)]
+    #[command(about, version)]
+    struct CliArgs {
+        /// Data file paths.
+        #[arg(required = false, num_args = 0..)]
+        paths: Vec<String>,
 
-    eframe::run_native(
-        "TurboPlot",
-        options,
-        Box::new(move |cc| Ok(Box::new(TurboPlotApp::new(&cc.egui_ctx, args)))),
-    )
-    .unwrap();
+        /// Trace sampling rate in MS/s. Default to 125MS/s
+        #[arg(long, short, default_value_t = 125.0f32)]
+        sampling_rate: f32,
+
+        /// Specify a digital filter.
+        #[arg(long, requires("cutoff_freq"), value_parser = clap::value_parser!(Filter))]
+        filter: Option<Filter>,
+
+        /// Cutoff frequency in kHz if a filter has been specified.
+        #[arg(long, requires("filter"), default_value_t = 1000.0f32)]
+        cutoff_freq: f32,
+
+        /// Trace file format. If not specified, TurboPlot will guess from file extension.
+        #[arg(long, short, value_parser = clap::value_parser!(TraceFormat))]
+        format: Option<TraceFormat>,
+
+        /// When loading a CSV file, how many lines must be skipped before reading the values.
+        #[arg(long, default_value_t = 0)]
+        skip_lines: usize,
+
+        /// When loading a CSV file, this is the index of the column storing the trace values.
+        /// Index starts at zero.
+        #[arg(long, default_value_t = 0)]
+        column: usize,
+
+        /// Number of GPU rendering threads to spawn.
+        #[arg(long, short, default_value_t = 1)]
+        gpu: usize,
+
+        /// Number of CPU rendering threads to spawn. If not specified, TurboPlot will spawn as
+        /// many threads as the CPU can run simultaneously.
+        #[arg(long, short)]
+        cpu: Option<usize>,
+
+        /// For files that contain multiple traces, select which traces to load.
+        /// Format: comma-separated indices or ranges, e.g. "1-3,6,7-8,12".
+        /// If not specified, all frames are loaded.
+        #[arg(long)]
+        frames: Option<String>,
+    }
+
+    impl From<CliArgs> for Args {
+        fn from(cli: CliArgs) -> Self {
+            Self {
+                paths: cli.paths,
+                sampling_rate: cli.sampling_rate,
+                filter: cli.filter,
+                cutoff_freq: cli.cutoff_freq,
+                format: cli.format,
+                skip_lines: cli.skip_lines,
+                column: cli.column,
+                gpu: cli.gpu,
+                cpu: cli.cpu,
+                frames: cli.frames,
+            }
+        }
+    }
+
+    turboplot_lib::run_native(CliArgs::parse().into());
 }
+
+#[cfg(target_arch = "wasm32")]
+fn main() {}

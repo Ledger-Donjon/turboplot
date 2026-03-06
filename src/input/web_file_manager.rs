@@ -1,34 +1,49 @@
-//! Native file manager GUI for selecting trace files via drag-and-drop with a settings panel.
+//! Web file manager GUI: drag-and-drop or URL input with a settings panel.
+//! Fetches trace files over HTTP when a URL is provided.
 
-use super::loading::{LoadResult, collect_frames, parse_traces};
+use super::loading::{self, FetchSlot, LoadResult, collect_frames, load_from_bytes, parse_traces};
 use super::Args;
 use crate::filtering::Filter;
 use crate::loaders::{TraceFormat, guess_format};
 use egui::{Color32, ComboBox, DragValue, DroppedFile, RichText, Stroke, TextEdit};
+use std::sync::{Arc, Mutex};
 
-/// File manager GUI: drag-and-drop area with a settings panel.
-pub struct FileManager {
-    /// Arguments (editable by the user).
-    args: Args,
-    /// Text buffer for the frames input field.
-    frames_text: String,
-    /// Error message from the last failed load attempt.
-    error: Option<String>,
+enum WebState {
+    Input,
+    Fetching,
 }
 
-impl FileManager {
-    /// Creates a new file manager with the given initial arguments.
+/// Web file manager with drag-and-drop and URL fetch support.
+pub struct WebFileManager {
+    args: Args,
+    frames_text: String,
+    url_text: String,
+    error: Option<String>,
+    state: WebState,
+    fetch_result: FetchSlot,
+}
+
+impl WebFileManager {
     pub fn new(args: Args) -> Self {
         let frames_text = args.frames.clone().unwrap_or_default();
         Self {
             args,
             frames_text,
+            url_text: String::new(),
             error: None,
+            state: WebState::Input,
+            fetch_result: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Updates the file manager UI and returns the result.
     pub fn update(&mut self, ctx: &egui::Context) -> LoadResult {
+        match self.state {
+            WebState::Input => self.update_input(ctx),
+            WebState::Fetching => self.update_fetching(ctx),
+        }
+    }
+
+    fn update_input(&mut self, ctx: &egui::Context) -> LoadResult {
         egui::SidePanel::right("settings_panel")
             .min_width(220.0)
             .show(ctx, |ui| {
@@ -44,15 +59,56 @@ impl FileManager {
             return self.load_dropped_files(&dropped);
         }
 
-        if !self.args.paths.is_empty() {
-            let paths = std::mem::take(&mut self.args.paths);
-            return self.load_paths(&paths);
-        }
-
         LoadResult::Pending
     }
 
-    /// Syncs the frames text field back into args before loading.
+    fn update_fetching(&mut self, ctx: &egui::Context) -> LoadResult {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let rect = ui.available_rect_before_wrap();
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                ui.centered_and_justified(|ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(rect.height() / 2.0 - 30.0);
+                        ui.spinner();
+                        ui.add_space(8.0);
+                        ui.label(
+                            RichText::new("Fetching trace...")
+                                .size(18.0)
+                                .color(Color32::GRAY),
+                        );
+                    });
+                });
+            });
+        });
+
+        let fetched = self.fetch_result.lock().unwrap().take();
+        if let Some(result) = fetched {
+            self.sync_frames_arg();
+            match result {
+                Ok((bytes, name)) => match load_from_bytes(&bytes, &name, &self.args) {
+                    Ok((labels, traces)) => {
+                        return LoadResult::Loaded {
+                            labels,
+                            traces,
+                            args: self.args.clone(),
+                        };
+                    }
+                    Err(e) => {
+                        self.error = Some(e);
+                        self.state = WebState::Input;
+                    }
+                },
+                Err(e) => {
+                    self.error = Some(e);
+                    self.state = WebState::Input;
+                }
+            }
+        }
+
+        ctx.request_repaint();
+        LoadResult::Pending
+    }
+
     fn sync_frames_arg(&mut self) {
         let trimmed = self.frames_text.trim();
         self.args.frames = if trimmed.is_empty() {
@@ -62,7 +118,15 @@ impl FileManager {
         };
     }
 
-    /// Renders the settings sidebar.
+    fn start_fetch(&mut self, url: String) {
+        self.state = WebState::Fetching;
+        self.error = None;
+        let slot = self.fetch_result.clone();
+        *slot.lock().unwrap() = None;
+        loading::spawn_fetch(url, slot);
+    }
+
+    /// Shared settings sidebar (no CPU/GPU thread controls on web).
     fn settings_ui(&mut self, ui: &mut egui::Ui) {
         ui.add_space(10.0);
         ui.heading("Load Settings");
@@ -77,31 +141,6 @@ impl FileManager {
                     .speed(25.0),
             );
         });
-
-        let mut cpu_value = self.args.cpu.unwrap_or(self.args.cpu_threads());
-        ui.horizontal(|ui| {
-            ui.label("CPU Threads:");
-            if ui
-                .add(DragValue::new(&mut cpu_value).range(1..=self.args.cpu_threads()))
-                .changed()
-            {
-                self.args.cpu = Some(cpu_value);
-            }
-        })
-        .response
-        .on_hover_text(format!(
-            "Number of CPU rendering threads (max: {})",
-            self.args.cpu_threads()
-        ));
-
-        ui.add_space(5.0);
-
-        ui.horizontal(|ui| {
-            ui.label("GPU Threads:");
-            ui.add(DragValue::new(&mut self.args.gpu).range(0..=16));
-        })
-        .response
-        .on_hover_text("Number of GPU rendering threads (0 to disable GPU rendering)");
 
         ui.add_space(15.0);
         ui.separator();
@@ -208,8 +247,7 @@ impl FileManager {
         }
     }
 
-    /// Renders the central drop-zone area.
-    fn drop_zone_ui(&self, ui: &mut egui::Ui) {
+    fn drop_zone_ui(&mut self, ui: &mut egui::Ui) {
         let rect = ui.available_rect_before_wrap();
         ui.painter().rect_stroke(
             rect.shrink(16.0),
@@ -221,12 +259,44 @@ impl FileManager {
         ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
             ui.centered_and_justified(|ui| {
                 ui.vertical_centered(|ui| {
-                    ui.add_space(rect.height() / 2.0 - 30.0);
+                    ui.add_space(rect.height() / 2.0 - 60.0);
                     ui.label(
                         RichText::new("Drop .npy, .csv or .wfm files here")
                             .size(22.0)
                             .color(Color32::GRAY),
                     );
+
+                    ui.add_space(16.0);
+                    ui.label(
+                        RichText::new("or paste a URL")
+                            .size(16.0)
+                            .color(Color32::GRAY),
+                    );
+                    ui.add_space(8.0);
+
+                    ui.horizontal(|ui| {
+                        let available = ui.available_width();
+                        let field_width = (available - 60.0).max(200.0).min(500.0);
+                        let offset = (available - field_width - 60.0) / 2.0;
+                        ui.add_space(offset.max(0.0));
+
+                        let response = ui.add(
+                            TextEdit::singleline(&mut self.url_text)
+                                .hint_text("https://example.com/trace.npy")
+                                .desired_width(field_width),
+                        );
+
+                        let enter_pressed = response.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter));
+
+                        if (ui.button("Load").clicked() || enter_pressed)
+                            && !self.url_text.trim().is_empty()
+                        {
+                            let url = self.url_text.trim().to_string();
+                            self.start_fetch(url);
+                        }
+                    });
+
                     if let Some(ref err) = self.error {
                         ui.add_space(12.0);
                         ui.label(RichText::new(err).color(Color32::RED));
@@ -236,7 +306,6 @@ impl FileManager {
         });
     }
 
-    /// Load traces from dropped files (works on both native and web).
     fn load_dropped_files(&mut self, files: &[DroppedFile]) -> LoadResult {
         self.sync_frames_arg();
         let mut labels = Vec::new();
@@ -249,72 +318,13 @@ impl FileManager {
                 continue;
             };
 
-            match self.load_single_file(file, format) {
-                Ok(frames) => {
-                    collect_frames(name, frames, &self.args, &mut labels, &mut traces);
-                }
-                Err(e) => {
-                    self.error = Some(format!("Failed to load {name}: {e}"));
-                }
+            if let Some(ref bytes) = file.bytes {
+                let cursor = std::io::Cursor::new(bytes.as_ref());
+                let frames = parse_traces(cursor, format, name, &self.args);
+                collect_frames(name, frames, &self.args, &mut labels, &mut traces);
+            } else {
+                self.error = Some("No data in dropped file".into());
             }
-        }
-
-        if traces.is_empty() {
-            return LoadResult::Pending;
-        }
-
-        self.error = None;
-        LoadResult::Loaded {
-            labels,
-            traces,
-            args: self.args.clone(),
-        }
-    }
-
-    /// Load a single dropped file from either its in-memory bytes or filesystem path.
-    fn load_single_file(
-        &self,
-        file: &DroppedFile,
-        format: TraceFormat,
-    ) -> Result<Vec<Vec<f32>>, String> {
-        if let Some(ref bytes) = file.bytes {
-            let cursor = std::io::Cursor::new(bytes.as_ref());
-            Ok(parse_traces(cursor, format, &file.name, &self.args))
-        } else if let Some(ref path) = file.path {
-            let f = std::fs::File::open(path).map_err(|e| e.to_string())?;
-            Ok(parse_traces(
-                std::io::BufReader::new(f),
-                format,
-                &file.name,
-                &self.args,
-            ))
-        } else {
-            Err("no data in dropped file".into())
-        }
-    }
-
-    /// Load traces from filesystem paths (used when CLI provides paths).
-    fn load_paths(&mut self, paths: &[String]) -> LoadResult {
-        self.sync_frames_arg();
-        let mut labels = Vec::new();
-        let mut traces = Vec::new();
-
-        for path in paths {
-            let Some(format) = self.args.format.or_else(|| guess_format(path)) else {
-                self.error = Some(format!("Unrecognized file extension: {path}"));
-                continue;
-            };
-
-            let file = match std::fs::File::open(path) {
-                Ok(f) => f,
-                Err(e) => {
-                    self.error = Some(format!("Failed to open {path}: {e}"));
-                    continue;
-                }
-            };
-
-            let frames = parse_traces(std::io::BufReader::new(file), format, path, &self.args);
-            collect_frames(path, frames, &self.args, &mut labels, &mut traces);
         }
 
         if traces.is_empty() {

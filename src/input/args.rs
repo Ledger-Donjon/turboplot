@@ -1,60 +1,47 @@
-//! Command-line arguments and configuration.
+//! Application configuration.
 
 use crate::filtering::Filter;
 use crate::loaders::TraceFormat;
-use clap::Parser;
 use std::collections::HashSet;
-use std::thread::available_parallelism;
 
 /// TurboPlot is a blazingly fast waveform renderer made for visualizing huge traces.
 ///
 /// Arguments for loading and displaying traces.
 /// These can be provided via CLI or modified through the file manager UI.
-#[derive(Parser, Clone)]
-#[command(about, version)]
+#[derive(Clone)]
 pub struct Args {
     /// Data file paths.
-    #[arg(required = false, num_args = 0..)]
     pub paths: Vec<String>,
 
-    /// Trace sampling rate in MS/s. Default to 125MS/s
-    #[arg(long, short, default_value_t = 125.0f32)]
+    /// Trace sampling rate in MS/s. Default to 125MS/s.
     pub sampling_rate: f32,
 
     /// Specify a digital filter.
-    #[arg(long, requires("cutoff_freq"), value_enum)]
     pub filter: Option<Filter>,
 
     /// Cutoff frequency in kHz if a filter has been specified.
-    #[arg(long, requires("filter"), default_value_t = 1000.0f32)]
     pub cutoff_freq: f32,
 
     /// Trace file format. If not specified, TurboPlot will guess from file extension.
-    #[arg(long, short)]
     pub format: Option<TraceFormat>,
 
     /// When loading a CSV file, how many lines must be skipped before reading the values.
-    #[arg(long, default_value_t = 0)]
     pub skip_lines: usize,
 
     /// When loading a CSV file, this is the index of the column storing the trace values. Index
     /// starts at zero.
-    #[arg(long, default_value_t = 0)]
     pub column: usize,
 
     /// Number of GPU rendering threads to spawn.
-    #[arg(long, short, default_value_t = 1)]
     pub gpu: usize,
 
     /// Number of CPU rendering threads to spawn. If not specified, TurboPlot will spawn as many
     /// threads as the CPU can run simultaneously.
-    #[arg(long, short)]
     pub cpu: Option<usize>,
 
     /// For files that contain multiple traces, select which traces to load.
     /// Format: comma-separated indices or ranges, e.g. "1-3,6,7-8,12".
     /// If not specified, all frames are loaded.
-    #[arg(long)]
     pub frames: Option<String>,
 }
 
@@ -62,12 +49,9 @@ impl Args {
     /// Returns the number of CPU threads to use, resolving the default if not specified.
     pub fn cpu_threads(&self) -> usize {
         self.cpu.unwrap_or_else(|| {
-            available_parallelism()
+            std::thread::available_parallelism()
                 .map(|x| x.get())
-                .unwrap_or_else(|_| {
-                    println!("Warning: failed to query available parallelism.");
-                    1
-                })
+                .unwrap_or(1)
         })
     }
 
@@ -98,4 +82,85 @@ impl Args {
         }
         Some(set)
     }
+}
+
+impl Default for Args {
+    fn default() -> Self {
+        Self {
+            paths: Vec::new(),
+            sampling_rate: 125.0,
+            filter: None,
+            cutoff_freq: 1000.0,
+            format: None,
+            skip_lines: 0,
+            column: 0,
+            gpu: 1,
+            cpu: None,
+            frames: None,
+        }
+    }
+}
+
+/// Parse URL query parameters into [`Args`] and an optional auto-fetch URL.
+#[cfg(target_arch = "wasm32")]
+pub fn parse_url_params() -> (Args, Option<String>) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return (Args::default(), None),
+    };
+
+    let search = match window.location().search() {
+        Ok(s) => s,
+        Err(_) => return (Args::default(), None),
+    };
+
+    let params = match web_sys::UrlSearchParams::new_with_str(&search) {
+        Ok(p) => p,
+        Err(_) => return (Args::default(), None),
+    };
+
+    let mut args = Args::default();
+
+    if let Some(v) = params.get("sampling_rate") {
+        if let Ok(sr) = v.parse::<f32>() {
+            args.sampling_rate = sr;
+        }
+    }
+
+    if let Some(v) = params.get("format") {
+        if let Ok(f) = v.parse::<TraceFormat>() {
+            args.format = Some(f);
+        }
+    }
+
+    if let Some(v) = params.get("filter") {
+        if let Ok(f) = v.parse::<Filter>() {
+            args.filter = Some(f);
+        }
+    }
+
+    if let Some(v) = params.get("cutoff_freq") {
+        if let Ok(cf) = v.parse::<f32>() {
+            args.cutoff_freq = cf;
+        }
+    }
+
+    if let Some(v) = params.get("skip_lines") {
+        if let Ok(sl) = v.parse::<usize>() {
+            args.skip_lines = sl;
+        }
+    }
+
+    if let Some(v) = params.get("column") {
+        if let Ok(c) = v.parse::<usize>() {
+            args.column = c;
+        }
+    }
+
+    if let Some(v) = params.get("frames") {
+        args.frames = Some(v);
+    }
+
+    let auto_url = params.get("url");
+    (args, auto_url)
 }

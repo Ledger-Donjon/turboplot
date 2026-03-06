@@ -1,9 +1,7 @@
-use crate::{
-    renderer::Renderer,
-    util::{Fixed, FixedVec2},
-};
+//! Tile data model: tiling library, tile status, properties, sizes, and color scales.
+
+use crate::util::{Fixed, FixedVec2};
 use egui::{Color32, ColorImage, epaint::Hsva, lerp};
-use std::sync::{Arc, Condvar, Mutex};
 
 /// A library of tiles and their current rendering status and result.
 ///
@@ -122,97 +120,22 @@ pub struct TileProperties {
     pub size: TileSize,
 }
 
-pub struct TilingRenderer {
-    renderer: Box<dyn Renderer>,
-    shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-    traces: Arc<Vec<Arc<Vec<f32>>>>,
+/// Defines the size of a tile.
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
+pub struct TileSize {
+    pub(crate) w: u32,
+    pub(crate) h: u32,
 }
 
-impl TilingRenderer {
-    pub fn new(
-        shared_tiling: Arc<(Mutex<Tiling>, Condvar)>,
-        traces: Arc<Vec<Arc<Vec<f32>>>>,
-        renderer: Box<dyn Renderer>,
-    ) -> Self {
-        Self {
-            renderer,
-            shared_tiling,
-            traces,
-        }
+impl TileSize {
+    pub fn new(w: u32, h: u32) -> Self {
+        Self { w, h }
     }
 
-    pub fn render_loop(&mut self) {
-        loop {
-            self.render_next_tile();
-            {
-                let (tiling, condvar) = &*self.shared_tiling;
-                let guard = tiling.lock().unwrap();
-                let _guard = condvar.wait_while(guard, |t| !t.has_pending()).unwrap();
-            }
-        }
-    }
-
-    fn render_next_tile(&mut self) {
-        let Some(properties) = self.shared_tiling.0.lock().unwrap().take_job() else {
-            return;
-        };
-        let data = self.render_tile(
-            properties.id,
-            properties.index,
-            properties.offset,
-            properties.scale,
-            properties.size,
-        );
-        // Save the result
-        let (tiling, _) = &*self.shared_tiling;
-        let mut tiling = tiling.lock().unwrap();
-        if let Some(tile) = tiling.tiles.iter_mut().find(|x| x.properties == properties) {
-            tile.data = data;
-            tile.status = TileStatus::Rendered;
-        } else {
-            // Tile not found, it probably has been deleted during rendering. Save as new tile
-            // anyway.
-            tiling.tiles.push(Tile {
-                status: TileStatus::Rendered,
-                properties,
-                data,
-            });
-        }
-    }
-
-    /// Renders the tile starting a sample `index` for the given scales `scale_x` and `scale_y`.
-    fn render_tile(
-        &mut self,
-        id: u32,
-        index: i32,
-        offset: Fixed,
-        scale: FixedVec2,
-        size: TileSize,
-    ) -> Vec<u32> {
-        let trace: &Vec<f32> = &self.traces[id as usize];
-        let trace_len = trace.len() as i32;
-        let i_start = (index as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
-        let i_end = ((index + 1) as f32 * size.w as f32 * scale.x.to_num::<f32>()).floor() as i32;
-
-        if (i_start >= trace_len) || (i_start < 0) {
-            return vec![0; size.area() as usize];
-        }
-
-        let trace_chunk = &trace[i_start as usize..(i_end + 1).min(trace_len) as usize];
-
-        // We need at least 2 points to have one segment.
-        if trace_chunk.len() < 2 {
-            return vec![0; size.area() as usize];
-        }
-
-        self.renderer.render(
-            (size.w as f32 * scale.x.to_num::<f32>()) as u32,
-            trace_chunk,
-            size.w,
-            size.h,
-            offset.to_num::<f32>(),
-            scale.y.to_num::<f32>(),
-        )
+    /// Returns width multiplied by height.
+    /// Panics in case of overflow.
+    pub fn area(&self) -> u32 {
+        self.w.checked_mul(self.h).unwrap()
     }
 }
 
@@ -250,23 +173,4 @@ pub struct ColorScale {
     pub power: f32,
     pub opacity: f32,
     pub gradient: Gradient,
-}
-
-/// Defines the size of a tile.
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
-pub struct TileSize {
-    w: u32,
-    h: u32,
-}
-
-impl TileSize {
-    pub fn new(w: u32, h: u32) -> Self {
-        Self { w, h }
-    }
-
-    /// Returns width multiplied by height.
-    /// Panics in case of overflow.
-    pub fn area(&self) -> u32 {
-        self.w.checked_mul(self.h).unwrap()
-    }
 }

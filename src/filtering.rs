@@ -1,7 +1,7 @@
 use biquad::{Biquad, Coefficients, DirectForm1, Hertz, Q_BUTTERWORTH_F32, Type};
 use serde::Serialize;
 
-#[derive(clap::ValueEnum, Copy, Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 /// Digital filters supported by TurboPlot.
 pub enum Filter {
@@ -13,6 +13,31 @@ pub enum Filter {
     BandPass,
     /// Notch filter
     Notch,
+}
+
+impl std::fmt::Display for Filter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Filter::LowPass => write!(f, "low-pass"),
+            Filter::HighPass => write!(f, "high-pass"),
+            Filter::BandPass => write!(f, "band-pass"),
+            Filter::Notch => write!(f, "notch"),
+        }
+    }
+}
+
+impl std::str::FromStr for Filter {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "low-pass" => Ok(Filter::LowPass),
+            "high-pass" => Ok(Filter::HighPass),
+            "band-pass" => Ok(Filter::BandPass),
+            "notch" => Ok(Filter::Notch),
+            _ => Err(format!("unknown filter: {s}")),
+        }
+    }
 }
 
 /// Converts CLI filters into biquad ones.

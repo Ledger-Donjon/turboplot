@@ -1,6 +1,10 @@
-use muscat::util::read_array1_from_npy_file;
 use npyz::{DType, NpyFile};
 use std::io::BufRead;
+
+/// Reads all elements from an NpyFile into a Vec.
+fn npy_to_vec<T: npyz::Deserialize, R: std::io::Read>(npy: NpyFile<R>) -> Vec<T> {
+    npy.into_vec::<T>().unwrap()
+}
 
 /// Load a numpy file as one or more traces.
 ///
@@ -16,35 +20,28 @@ pub fn load_npy<R: BufRead>(reader: R, path: &str) -> Vec<Vec<f32>> {
     };
 
     let flat: Vec<f32> = match (dtype.type_char(), dtype.num_bytes()) {
-        (npyz::TypeChar::Int, Some(1)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i8| x as f32)
-            .collect(),
-        (npyz::TypeChar::Int, Some(2)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i16| x as f32)
-            .collect(),
-        (npyz::TypeChar::Int, Some(4)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: i32| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(1)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u8| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(2)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u16| x as f32)
-            .collect(),
-        (npyz::TypeChar::Uint, Some(4)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: u32| x as f32)
-            .collect(),
-        (npyz::TypeChar::Float, Some(4)) => read_array1_from_npy_file(npy).into_iter().collect(),
-        (npyz::TypeChar::Float, Some(8)) => read_array1_from_npy_file(npy)
-            .into_iter()
-            .map(|x: f64| x as f32)
-            .collect(),
+        (npyz::TypeChar::Int, Some(1)) => {
+            npy_to_vec::<i8, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Int, Some(2)) => {
+            npy_to_vec::<i16, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Int, Some(4)) => {
+            npy_to_vec::<i32, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Uint, Some(1)) => {
+            npy_to_vec::<u8, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Uint, Some(2)) => {
+            npy_to_vec::<u16, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Uint, Some(4)) => {
+            npy_to_vec::<u32, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
+        (npyz::TypeChar::Float, Some(4)) => npy_to_vec::<f32, _>(npy),
+        (npyz::TypeChar::Float, Some(8)) => {
+            npy_to_vec::<f64, _>(npy).into_iter().map(|x| x as f32).collect()
+        }
         _ => panic!("Unsupported data type"),
     };
 
