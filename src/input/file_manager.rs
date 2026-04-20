@@ -2,7 +2,7 @@
 
 use super::Args;
 use crate::filtering::Filter;
-use crate::loaders::TraceFormat;
+use crate::loaders::{NpyLayout, TraceFormat};
 use egui::{ComboBox, DragValue, TextEdit};
 use egui_file_dialog::FileDialog;
 
@@ -174,7 +174,7 @@ impl FileManager {
                         );
                     });
 
-                // CSV-specific options (show if format is CSV or Auto)
+                // CSV-specific options.
                 if matches!(self.args.format, None | Some(TraceFormat::Csv)) {
                     ui.add_space(10.0);
                     ui.label("CSV Options:");
@@ -185,7 +185,7 @@ impl FileManager {
                         ui.add(DragValue::new(&mut self.args.column).range(0..=1000));
                     })
                     .response
-                    .on_hover_text("Index of the column containing trace values starting from 0");
+                    .on_hover_text("Index of the column containing trace values, starting from 0.");
 
                     ui.add_space(5.0);
                     ui.horizontal(|ui| {
@@ -193,29 +193,66 @@ impl FileManager {
                         ui.add(DragValue::new(&mut self.args.skip_lines).range(0..=10000));
                     })
                     .response
-                    .on_hover_text("Number of header lines to skip before reading values");
+                    .on_hover_text("Number of header lines to skip before reading values.");
                 }
 
-                // Multi-trace options (show for formats that can contain multiple traces)
-                if matches!(
-                    self.args.format,
-                    None | Some(TraceFormat::TekWfm) | Some(TraceFormat::Numpy)
-                ) {
-                    ui.add_space(5.0);
-
+                // NPY-specific options: how to interpret 2D arrays.
+                if matches!(self.args.format, None | Some(TraceFormat::Numpy)) {
+                    ui.add_space(10.0);
                     ui.horizontal(|ui| {
-                        ui.label("Traces indices:");
-                        ui.add(
-                            TextEdit::singleline(&mut self.frames_text)
-                                .hint_text("all or 0-3,6,7-8,12")
-                                .desired_width(120.0),
-                        );
+                        ui.label("NPY 2D layout:");
+                        let layout_label = match self.args.npy_layout {
+                            NpyLayout::Auto => "Auto",
+                            NpyLayout::Columns => "Columns",
+                            NpyLayout::Rows => "Rows",
+                        };
+                        ComboBox::from_id_salt("npy_layout_combo")
+                            .selected_text(layout_label)
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(
+                                    &mut self.args.npy_layout,
+                                    NpyLayout::Auto,
+                                    "Auto",
+                                );
+                                ui.selectable_value(
+                                    &mut self.args.npy_layout,
+                                    NpyLayout::Columns,
+                                    "Columns (pts, n_traces)",
+                                );
+                                ui.selectable_value(
+                                    &mut self.args.npy_layout,
+                                    NpyLayout::Rows,
+                                    "Rows (n_traces, pts)",
+                                );
+                            });
                     })
                     .response
                     .on_hover_text(
-                        "Comma-separated indices or ranges, e.g. \"0-3,6,7-8,12\". Leave empty to load all traces.",
+                        "How to interpret 2D Numpy arrays:\n\
+                         - Auto: shape (pts, few cols) is column-wise, otherwise row-wise.\n\
+                         - Columns: one trace per column (array is transposed).\n\
+                         - Rows: one trace per row.\n\
+                         In both 2D cases, use 'Traces indices' below to pick a subset.",
                     );
                 }
+
+                // Trace selection: applies to any format/layout. For files that
+                // produce a single trace (e.g. 1D NumPy, CSV, column-wise 2D
+                // NumPy) only index 0 is meaningful; for multi-trace files
+                // (row-wise 2D NumPy, FastFrame WFM) any subset can be picked.
+                ui.add_space(5.0);
+                ui.horizontal(|ui| {
+                    ui.label("Traces indices:");
+                    ui.add(
+                        TextEdit::singleline(&mut self.frames_text)
+                            .hint_text("all or 0-3,6,7-8,12")
+                            .desired_width(120.0),
+                    );
+                })
+                .response
+                .on_hover_text(
+                    "Comma-separated indices or ranges, e.g. \"0-3,6,7-8,12\". Leave empty to load all traces.",
+                );
             });
 
         if let Some(paths) = self.file_dialog.take_picked_multiple() {
