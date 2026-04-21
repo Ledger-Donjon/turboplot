@@ -1,7 +1,7 @@
 //! Command-line arguments and configuration.
 
 use crate::filtering::Filter;
-use crate::loaders::TraceFormat;
+use crate::loaders::{NpyLayout, TraceFormat};
 use clap::Parser;
 use std::collections::HashSet;
 use std::thread::available_parallelism;
@@ -56,6 +56,16 @@ pub struct Args {
     /// If not specified, all frames are loaded.
     #[arg(long)]
     pub frames: Option<String>,
+
+    /// For 2D Numpy arrays, how to interpret the shape.
+    ///
+    /// - `auto` (default): arrays with few columns and many rows are treated
+    ///   as column-wise (`--column` picks the signal column, e.g. oscilloscope
+    ///   `(time, voltage)` dumps); everything else is row-wise.
+    /// - `columns`: shape `(pts, cols)`, one trace per column.
+    /// - `rows`: shape `(n_traces, pts)`, one trace per row.
+    #[arg(long, value_enum, default_value_t = NpyLayout::Auto)]
+    pub npy_layout: NpyLayout,
 }
 
 impl Args {

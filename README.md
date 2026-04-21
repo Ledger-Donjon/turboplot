@@ -39,7 +39,7 @@ cargo run --release -- waveform.npy
 
 ### Supported formats
 
-- **NumPy** (`.npy`): 1D arrays (single trace) and 2D arrays (one trace per row).
+- **NumPy** (`.npy`): 1D arrays (single trace) and 2D arrays.
 - **Tektronix WFM** (`.wfm`): versions 1, 2 and 3, including FastFrame files (one trace per frame).
 - **CSV** (`.csv`): single-column or multi-column files.
 
@@ -51,15 +51,34 @@ When loading a CSV file, `--skip-lines` shall be specified to skip header lines,
 turboplot --format csv --skip-lines 10 --column 2 waveform.csv
 ```
 
+### 2D NumPy arrays
+
+Two conventions are commonly used for 2D `.npy` files:
+
+- **Row-wise** — shape `(n_traces, pts)`, e.g. a stack of traces captured in FastFrame mode.
+- **Column-wise** — shape `(pts, n_traces)`, e.g. oscilloscope dumps with a time column and one or more signal columns. Internally, the array is transposed so it is handled identically to the row-wise case.
+
+In both cases, `--frames` selects which traces to load; indices refer to rows (row-wise) or to columns (column-wise), not to CSV-style data columns.
+
+By default (`--npy-layout auto`) TurboPlot guesses from the shape: arrays with few columns and many rows are treated as column-wise, everything else as row-wise. The interpretation can be forced with `--npy-layout columns` or `--npy-layout rows`.
+
+```
+# Column-wise oscilloscope dump: 2 traces (e.g. time + voltage), keep only the second
+turboplot --frames 1 waveform.npy
+
+# Force row-wise interpretation and pick a few traces out of a multi-trace file
+turboplot --npy-layout rows --frames 0-3,7 stack.npy
+```
+
 ### Multi-trace files and frame selection
 
-Files that contain multiple traces (2D NumPy arrays, FastFrame WFM files) load all traces by default. You can select a subset with `--frames`:
+Files that contain multiple traces (row-wise 2D NumPy arrays, FastFrame WFM files) load all traces by default. You can select a subset with `--frames`:
 
 ```
 turboplot --frames 0-3,7,10-12 capture.wfm
 ```
 
-The format accepts comma-separated indices and ranges (e.g. `1-3,6,7-8,12`).
+The format accepts comma-separated indices and ranges (e.g. `1-3,6,7-8,12`). `--frames` applies to any format independently of the layout: for files that produce a single trace (1D NumPy, CSV, column-wise 2D NumPy) only `--frames 0` is meaningful. To keep the UI responsive, TurboPlot caps the total number of split views to 64.
 
 ### Split-screen
 

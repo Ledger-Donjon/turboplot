@@ -102,12 +102,13 @@ impl TurboPlotApp {
             // All loaders return Vec<Vec<f32>> (one or more traces per file)
             let mut frames = match format {
                 TraceFormat::TekWfm => load_tek_wfm(buf_reader, path),
-                TraceFormat::Numpy => load_npy(buf_reader, path),
+                TraceFormat::Numpy => load_npy(buf_reader, path, args.npy_layout),
                 TraceFormat::Csv => vec![load_csv(buf_reader, args.skip_lines, args.column)],
             };
 
             let n = frames.len();
             let selection = args.frame_selection();
+
             for (i, mut frame) in frames.drain(..).enumerate() {
                 if let Some(ref sel) = selection
                     && !sel.contains(&i)
@@ -125,8 +126,26 @@ impl TurboPlotApp {
                 traces.push(Arc::new(frame));
             }
         }
+
+        // Safety net: even with --frames, clamp the total number of viewers we
+        // are about to spawn to something sane so the UI stays responsive.
+        if traces.len() > Self::MAX_VIEWERS {
+            eprintln!(
+                "Warning: {} traces selected, keeping only the first {} to keep the UI responsive.",
+                traces.len(),
+                Self::MAX_VIEWERS
+            );
+            labels.truncate(Self::MAX_VIEWERS);
+            traces.truncate(Self::MAX_VIEWERS);
+        }
+
         (labels, traces)
     }
+
+    /// Hard cap on the total number of concurrent viewers (after `--frames`).
+    /// Each viewer gets its own viewport, toolbar and rendering queue; beyond
+    /// this the UI becomes unusable.
+    const MAX_VIEWERS: usize = 64;
 }
 
 impl eframe::App for TurboPlotApp {
